@@ -63,7 +63,9 @@ class SdrEngine private constructor(
 
     // ---------- 解调器 ----------
     private val wfmDemod = Demodulators.FmDemod()
-    private val stereo = Demodulators.StereoDecoder(256_000f)
+    private val stereo = Demodulators.StereoDecoder(256_000f)  // 解码留在 256k（38k 子载波需要 fs>76k）
+    private val audioDecL = RealDecimator(8, 129, 0.049f)       // 256k → 32k L
+    private val audioDecR = RealDecimator(8, 129, 0.049f)       // 256k → 32k R
     private val deempL = Demodulators.DeEmphasis(50f, 32_000f)
     private val deempR = Demodulators.DeEmphasis(50f, 32_000f)
     private val nfmDemod = Demodulators.NfmDemod()
@@ -73,9 +75,6 @@ class SdrEngine private constructor(
 
     // ---------- 音频 ----------
     private val audioRate = 32_000
-    // WFM 音频抽取：256k → 32k（÷8），截止 12.5kHz，阻带 15.8kHz < 16kHz
-    private val audioDecL = RealDecimator(8, 129, 0.049f)
-    private val audioDecR = RealDecimator(8, 129, 0.049f)
     private var audioTrack: AudioTrack? = null
 
     // ---------- 频谱显示（双缓冲交替，UI 即时读） ----------
@@ -224,13 +223,13 @@ class SdrEngine private constructor(
             val d = stageA.process(mixedI, mixedQ) ?: continue
             cnt++
             if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
-            // 鉴频：输出 1.0 = ±128kHz
+            // 鉴频：输出 1.0 = ±128kHz（满偏 ±75kHz → ×1.7 满幅）
             val mp = wfmDemod.demodulate(d.i, d.q) * WFM_DEV_SCALE
+            // 立体声解码在 256k（38k 子载波需 fs>76k），解码后双路 ÷8 → 32k
             val (l, r) = stereo.decode(mp)
             val la = audioDecL.process(l)
             val ra = audioDecR.process(r)
             if (la != null && ra != null) {
-                // 去加重在 32k 音频域（CCITT/中国 50µs）
                 val fl = deempL.process(la) * volume * 32767f
                 val fr = deempR.process(ra) * volume * 32767f
                 audioFrames[frames * 2] = fl.coerceIn(-32767f, 32767f).toInt().toShort()

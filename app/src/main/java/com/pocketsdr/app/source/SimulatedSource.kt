@@ -26,6 +26,8 @@ class SimulatedSource(
         var carrierPhase = 0.0
         var audioPhase = 0.0
         var modPhase = 0.0
+        var pilotPhase = 0.0   // 19kHz 导频相位（WFM 用）
+        var pilotInteg = 0.0   // 导频 FM 相位积分
     }
 
     private val stations = ArrayList<Station>()
@@ -84,11 +86,15 @@ class SimulatedSource(
                 val instPhase: Double
                 val amp: Double
                 when (st.type) {
-                    0 -> { // WFM + 19kHz 导频
+                    0 -> { // WFM + 19kHz 导频（独立相位积分，保证 PLL 可锁定）
                         st.modPhase += audio * st.deviation * twoPiOverFs
                         if (abs(st.modPhase) > 1e12) st.modPhase = 0.0
-                        instPhase = st.carrierPhase + st.modPhase +
-                            cos(st.audioPhase * 6.1) * 19000.0 * twoPiOverFs * 0.05
+                        // 导频：10% 调制度，独立 19kHz 相位积分
+                        st.pilotPhase += 19000.0 * twoPiOverFs
+                        if (st.pilotPhase > TWO_PI) st.pilotPhase -= TWO_PI
+                        st.pilotInteg += cos(st.pilotPhase) * 19000.0 * twoPiOverFs * 0.1
+                        if (abs(st.pilotInteg) > 1e9) st.pilotInteg = 0.0  // 精度保护
+                        instPhase = st.carrierPhase + st.modPhase + st.pilotInteg
                         amp = 0.16 * st.level
                     }
                     1 -> { // NFM
