@@ -88,8 +88,13 @@ fun SdrScreen(
             val intent = android.content.Intent(context, com.pocketsdr.app.RxService::class.java)
                 .putExtra("freq", tuned)
                 .putExtra("mode", mode.label)
-            if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
-            else context.startService(intent)
+            // Android 12+ 后台启动前台服务受限——App 在前台时才刷新通知，失败静默
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
+                else context.startService(intent)
+            } catch (_: IllegalStateException) {
+                // ForegroundServiceStartNotAllowedException：App 已不在前台，通知保持旧值即可
+            }
         } catch (_: Exception) {}
     }
 
