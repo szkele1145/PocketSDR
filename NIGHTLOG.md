@@ -40,10 +40,19 @@
 
 ## 待办（下轮心跳继续）
 
-1. RDS Gardner 环眼图调优（目标：全链路 PS 名稳定解出）
+1. **RDS 全链路位同步**（当前卡点，详见下方 RDS 诊断档案）
 2. DspVerify 级 3 射频链测试的抽取器与 Kotlin ComplexDecimator 同构化
-3. RTL 到货真机联调：加日志面板 + USB 常见故障自检
-4. GitHub Actions：当前 token 缺 `workflow` scope 无法推送 workflow 文件（本地已备好 `.github/workflows/build.yml`），**需要用户醒来后提供带 workflow scope 的 token** 或手动网页添加
+3. RTL 到货真机联调：日志面板已就绪（v0.6.2）
+4. GitHub Actions：**需要用户醒来后提供带 workflow scope 的 token**（workflow 文件已在本地）
+
+## RDS 诊断档案（三轮心跳的实证结论）
+
+- 级-1（位流直注）/ 级 0（理想时钟）/ 级 1（Costas+理想时钟）全 PASS——块解码、CRC、PS 组装、57k Costas、差分判据全部正确
+- 级 2（Gardner 全链路）：BER 10.4%（偏移 0 对齐），块锁定 10/16——CRC 命中多为假阳性
+- 已排除：低通带宽（2400/2800/3200 无差异）、判决滞后阈值（无效）、初始相位（无效）、失锁相位重置（无效）
+- 结论：错误在 Gardner 采样时刻的抖动（位边界/中点之间游走），相邻位中心样本差分对采样相位敏感
+- 下一步方案（待实施）：① 延迟匹配锁（位中点=电平跳变处检测，判决点定在过零后 1/4 位）② 或升 2 倍过采样 Gardner（4x）加 PI 带宽扫描
+- 产品影响：无（RDS 是增强功能，接收/录音/搜台/SSB 全部正常）
 
 ## 已知事项
 

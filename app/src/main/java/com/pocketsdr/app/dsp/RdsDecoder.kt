@@ -76,7 +76,7 @@ class RdsDecoder(private val fs: Float) {
                 val e = (cur - prevSym) * midSample
                 gardnerTrim = (gardnerTrim * 0.995 - e * 5e-5).coerceIn(-1e-3, 1e-3)
                 prevSym = cur
-                // 差分判决（乘积判据）：反相=1
+                // 差分判决（乘积判据，级0验证过）：反相=1
                 val bit = if (cur * prevSymForDecision < 0f) 1 else 0
                 prevSymForDecision = cur
                 pushBit(bit)

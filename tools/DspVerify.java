@@ -598,6 +598,35 @@ public class DspVerify {
             for (float v : mpx) dec.process(v);
             dec.debugBlocks = false;
             dec.eyeDiagnostics = false;
+            // BER 对齐分析：解码流 vs 原始流，滑窗找最佳偏移
+            {
+                int bestOff = -1, bestMatch = -1;
+                boolean bestInv = false;
+                int n = Math.min(dec.decodedCount, 2000);
+                for (int off = 0; off + n <= bits.length; off++) {
+                    for (boolean inv : new boolean[]{false, true}) {
+                        int match = 0;
+                        for (int i = 0; i < n; i++) {
+                            boolean src = bits[off + i] ^ inv;
+                            if ((dec.decodedBits[i] != 0) == src) match++;
+                        }
+                        if (match > bestMatch) { bestMatch = match; bestOff = off; bestInv = inv; }
+                    }
+                }
+                if (bestOff >= 0 && n > 0) {
+                    double ber = 1.0 - (double) bestMatch / n;
+                    System.out.printf("  BER: 偏移=%d 反相=%b 误码率=%.3f (%d/%d)%n",
+                        bestOff, bestInv, ber, n - bestMatch, n);
+                    // 前 48 位对比（找错误模式）
+                    StringBuilder sbO = new StringBuilder(), sbD = new StringBuilder();
+                    for (int i = 0; i < 48 && i < n; i++) {
+                        sbO.append(bits[bestOff + i] ? '1' : '0');
+                        sbD.append(dec.decodedBits[i] != 0 ? '1' : '0');
+                    }
+                    System.out.println("  原始: " + sbO);
+                    System.out.println("  解码: " + sbD);
+                }
+            }
             // 眼图输出：正/负簇的均值与离散度
             {
                 double pSum = 0; int pN = 0, nSum2 = 0, nN = 0;
@@ -628,8 +657,8 @@ public class DspVerify {
         static final float fs2 = 256000;  // 占位，构造中用
         double vcoPhase = 0, loopInteg = 0;
         final Biquad loopLp = Biquad.lowpass(800f, fs2, 0.7071f);
-        final Biquad dataLp = Biquad.lowpass(2400f, fs2, 0.7071f);
-        final Biquad dataLp2 = Biquad.lowpass(2400f, fs2, 0.7071f);
+        final Biquad dataLp = Biquad.lowpass(2800f, fs2, 0.7071f);
+        final Biquad dataLp2 = Biquad.lowpass(2800f, fs2, 0.7071f);
         final int delayHalf = Math.max(2, (int) (fs2 / 2375f));
         final float[] delayBuf = new float[delayHalf];
         int delayPos = 0;
@@ -639,9 +668,10 @@ public class DspVerify {
         final double clockVcoInc = 2 * Math.PI * 1187.5 / fs2;
         boolean lastSymbolPhase = false;
         float prevSym = 0, prevSymForDecision = 0, midSample = 0;
+        int lastBit = 0;
         long blockReg = 0;
         int blockBits = 0, expectBlock = 0, blockIdx = 0;
-        int bitDecisions = 0, blockLocks = 0;
+        int bitDecisions = 0, blockLocks = 0, missStreak = 0;
         boolean debugBlocks = false;
         // 眼图诊断
         boolean eyeDiagnostics = false;
@@ -704,7 +734,7 @@ public class DspVerify {
                     if (gardnerTrim > 1e-3) gardnerTrim = 1e-3;
                     if (gardnerTrim < -1e-3) gardnerTrim = -1e-3;
                     prevSym = cur;
-                    // 差分判决（乘积判据）：反相=1
+                    // 差分判决（乘积判据，级0验证过的）：反相=1
                     int bit = (cur * prevSymForDecision < 0) ? 1 : 0;
                     prevSymForDecision = cur;
                     bitDecisions++;
@@ -716,10 +746,21 @@ public class DspVerify {
                 } else {
                     midSample = base;
                 }
+                // 块失锁反馈：连续 26 位无 CRC 命中 → 用基带过零重置时钟相位
+                if (missStreak > 26) {
+                    missStreak = 0;
+                    // 过零在位边界：把 clockVco 相位设为 0（sin 过零上沿=判决点在过零后半位）
+                    clockVco = 0;
+                }
             }
         }
 
+        /** 收集解码位流（BER 诊断） */
+        int[] decodedBits = new int[4096];
+        int decodedCount = 0;
+
         void pushBit(int bit) {
+            if (decodedCount < decodedBits.length) decodedBits[decodedCount++] = bit;
             blockReg = (blockReg << 1) | bit;
             if (blockBits < 26) blockBits++;
             if (blockBits < 26) return;
@@ -731,6 +772,7 @@ public class DspVerify {
                 if (debugBlocks) System.out.printf("    块[%d] data=0x%04X%n", blockIdx, data);
                 blockIdx++;
                 blockLocks++;
+                missStreak = 0;
                 expectBlock = (expectBlock + 1) & 3;
                 if (blockIdx == 4) {
                     decodeGroup(blockData);
@@ -748,6 +790,7 @@ public class DspVerify {
                 blockReg = 0;
             } else {
                 blockBits = 25;
+                missStreak++;
             }
         }
 
