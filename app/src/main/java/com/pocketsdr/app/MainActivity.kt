@@ -41,19 +41,25 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var stereoLock by mutableStateOf(0f)
     private var engineReady by mutableStateOf(false)
 
-    private val waterfall = ArrayDeque<FloatArray>()
-    private val waterfallMaxRows = 100
+    // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
+    private val waterfallBmp = com.pocketsdr.app.ui.WaterfallBitmap(1024, 180)
+    private var wfVersion by mutableStateOf(0)
 
     // ---------- UiBridge ----------
     override fun pushWaterfallRow(rowDb: FloatArray) {
-        uiHandler.post {
-            waterfall.addLast(rowDb)
-            while (waterfall.size > waterfallMaxRows) waterfall.removeFirst()
-            spectrum = engine?.latestSpectrum ?: spectrum
-            signalDb = engine?.signalDb ?: -120f
-            stereoLock = engine?.stereoLock ?: 0f
+        // DSP 线程直接写 Bitmap（synchronized 保护），UI 帧读取
+        waterfallBmp.pushRow(rowDb)
+        // 每 4 行更新一次文本状态（谱线数据由引擎双缓冲直接读）
+        if (statusTick++ % 4 == 0) {
+            uiHandler.post {
+                wfVersion += 1
+                signalDb = engine?.signalDb ?: -120f
+                stereoLock = engine?.stereoLock ?: 0f
+            }
         }
     }
+
+    private var statusTick = 0
 
     override fun pushStatus(text: String) {
         uiHandler.post { status = text }
@@ -168,11 +174,13 @@ class MainActivity : ComponentActivity(), UiBridge {
     @Composable
     private fun Host() {
         val eng = engine
+        // 读 version 触发重组（Bitmap 内容变化）
+        @Suppress("UNUSED_EXPRESSION") wfVersion
         if (engineReady && eng != null) {
             SdrScreen(
                 engine = eng,
-                spectrum = spectrum,
-                waterfall = waterfall,
+                spectrum = eng.latestSpectrum,
+                waterfall = waterfallBmp,
                 status = status,
                 signalDb = signalDb,
                 stereoLock = stereoLock,

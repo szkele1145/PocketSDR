@@ -38,7 +38,7 @@ import kotlin.math.roundToLong
 fun SdrScreen(
     engine: SdrEngine,
     spectrum: FloatArray,
-    waterfall: ArrayDeque<FloatArray>,
+    waterfall: WaterfallBitmap,
     status: String,
     signalDb: Float,
     stereoLock: Float,
