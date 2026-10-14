@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <usb-device
+        vendor-id="0x0bda"
+        product-id="0x2832" />
+    <usb-device
+        vendor-id="0x0bda"
+        product-id="0x2838" />
+    <usb-device
+        vendor-id="0x0bda"
+        product-id="0x2831" />
+    <usb-device
+        vendor-id="0x0413"
+        product-id="0x6680" />
+</resources>
