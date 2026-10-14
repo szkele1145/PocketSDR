@@ -94,6 +94,18 @@ class SdrEngine private constructor(
     /** 立体声锁定强度 0..1（UI 显示 ST 指示） */
     val stereoLock: Float get() = stereo.stereoLock
 
+    // ---------- 录音 ----------
+    private var recorder: WavRecorder? = null
+    /** 开始录音；返回是否成功 */
+    fun startRecording(context: android.content.Context): Boolean {
+        val r = recorder ?: WavRecorder(context).also { recorder = it }
+        return r.start(audioRate, _tunedFreq)
+    }
+
+    fun stopRecording(): String? = recorder?.stop()
+
+    val isRecording: Boolean get() = recorder?.recording == true
+
     // ---------- 公共 API ----------
     fun start() {
         if (running) return
@@ -229,6 +241,7 @@ class SdrEngine private constructor(
         applySquelch(energy / kotlin.math.max(cnt, 1))
         if (frames > 0 && squelchOpen) {
             track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
+            recorder?.write(audioFrames, frames * 2)
         }
     }
 
@@ -263,6 +276,7 @@ class SdrEngine private constructor(
         applySquelch(energy / kotlin.math.max(cnt, 1))
         if (frames > 0 && squelchOpen) {
             track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
+            recorder?.write(audioFrames, frames * 2)
         }
     }
 

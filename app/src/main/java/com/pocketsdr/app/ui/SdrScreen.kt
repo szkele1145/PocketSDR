@@ -1,16 +1,25 @@
 package com.pocketsdr.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,13 +44,18 @@ fun SdrScreen(
     stereoLock: Float,
     onExit: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val modes = remember { SdrEngine.Mode.entries.toList() }
     var mode by remember { mutableStateOf(engine.mode) }
     var volume by remember { mutableStateOf(engine.volume) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
     var center by remember { mutableStateOf(engine.centerFreq) }
-    var showRtl by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(engine.isRecording) }
+    var showFreqInput by remember { mutableStateOf(false) }
+    var showFavorites by remember { mutableStateOf(false) }
+    val store = remember { com.pocketsdr.app.FreqStore(context) }
+    var favorites by remember { mutableStateOf(store.getFavorites()) }
 
     // 引擎状态变化 → UI 同步
     LaunchedEffect(Unit) {
@@ -105,7 +119,11 @@ fun SdrScreen(
                     text = formatFreq(tuned),
                     fontSize = 40.sp, fontWeight = FontWeight.Bold,
                     color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .pointerInput(Unit) {
+                            detectTapGestures { showFreqInput = true }
+                        }
                 )
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     IconButton(onClick = { engine.tuneWithinSpan(tuned + 100_000); tuned += 100_000 }) {
@@ -140,9 +158,10 @@ fun SdrScreen(
                 }
             }
 
-            // ---- 波段快捷 ----
+            // ---- 波段快捷 + 录音 + 收藏 ----
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 val bands = listOf(
@@ -156,6 +175,23 @@ fun SdrScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
                     ) { Text(name, fontSize = 12.sp) }
+                }
+                IconButton(onClick = {
+                    if (recording) {
+                        engine.stopRecording()
+                        recording = false
+                    } else {
+                        recording = engine.startRecording(context)
+                    }
+                }, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (recording) Icons.Filled.StopCircle else Icons.Filled.RadioButtonUnchecked,
+                        "录音",
+                        tint = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)
+                    )
+                }
+                IconButton(onClick = { showFavorites = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.StarBorder, "收藏", tint = Color(0xFFF6D55C))
                 }
             }
 
@@ -202,6 +238,91 @@ fun SdrScreen(
                 }
             }
         }
+    }
+
+    // ---- 频率输入对话框 ----
+    if (showFreqInput) {
+        var text by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showFreqInput = false },
+            title = { Text("输入频率 (MHz)") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("98.1") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    )
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    text.toFloatOrNull()?.let { mhz ->
+                        val f = (mhz * 1_000_000).toLong()
+                        engine.tuneTo(f)
+                        tuned = engine.tunedFreq
+                        center = engine.centerFreq
+                    }
+                    showFreqInput = false
+                }) { Text("调谐") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showFreqInput = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // ---- 收藏列表对话框 ----
+    if (showFavorites) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showFavorites = false },
+            title = { Text("收藏频道") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    if (favorites.isEmpty()) {
+                        Text("暂无收藏。收听到喜欢的台后点 ★+ 添加。", fontSize = 13.sp)
+                    }
+                    favorites.forEach { ch ->
+                        androidx.compose.foundation.layout.Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            androidx.compose.material3.TextButton(onClick = {
+                                engine.tuneTo(ch.freq)
+                                engine.selectMode(com.pocketsdr.app.FreqStore.modeFromIndex(ch.mode))
+                                mode = engine.mode
+                                tuned = engine.tunedFreq
+                                center = engine.centerFreq
+                                showFavorites = false
+                            }) {
+                                Text("${ch.name}  ${formatFreq(ch.freq)}", fontSize = 14.sp)
+                            }
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                            androidx.compose.material3.IconButton(onClick = {
+                                store.removeFavorite(ch.freq)
+                                favorites = store.getFavorites()
+                            }) {
+                                Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F),
+                                    modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    // 收藏当前频率
+                    val name = formatFreq(tuned)
+                    store.addFavorite(com.pocketsdr.app.FreqStore.Ch(name, tuned, com.pocketsdr.app.FreqStore.modeIndex(mode)))
+                    favorites = store.getFavorites()
+                }) { Text("★ 收藏当前") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showFavorites = false }) { Text("关闭") }
+            }
+        )
     }
 }
 
