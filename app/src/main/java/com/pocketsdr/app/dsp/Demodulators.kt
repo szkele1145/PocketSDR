@@ -70,13 +70,13 @@ object Demodulators {
          */
         fun decode(m: Float): Pair<Float, Float> {
             val pilot = pilotBp.process(m)
-            // 鉴相 + 包络
-            val pd = pilot * cos(phase).toFloat()
+            // 正交鉴相：pilot·sin(φ)，锁定时均值为 0，相位偏差时输出 ±err
+            val pd = pilot * sin(phase).toFloat()
             val err = loopLp.process(pd)
             pilotEnv = abs(pilot)
-            // 环路：比例 + 慢积分
-            freqInteg = freqInteg * 0.9999 + err * 8e-6
-            phase += baseInc + err * 0.05 + freqInteg
+            // 环路：比例 + 慢积分（增益经 Java 镜像 DspVerify 调参验证）
+            freqInteg = freqInteg * 0.99999 + err * 5e-6
+            phase += baseInc + err * 0.02 + freqInteg
             if (phase > TWO_PI) phase -= TWO_PI
             if (phase < 0.0) phase += TWO_PI
             lockSmooth = if (pilotEnv > PILOT_ON) {
@@ -87,10 +87,11 @@ object Demodulators {
                 // 单声道
                 return m to m
             }
-            // 38k 开关解调：m × cos(2φ) → LP = (L-R)/2
+            // 38k 开关解调：sub = LP(m·cos(2φ)) = (L−R)/2
+            // L = LP(m) + sub = (L+R)/2 + (L−R)/2；R = LP(m) − sub
             val sub = subLp.process((m * cos(2.0 * phase)).toFloat())
-            val l = sumLpL.process(m + 2f * sub)
-            val r = sumLpR.process(m - 2f * sub)
+            val l = sumLpL.process(m + sub)
+            val r = sumLpR.process(m - sub)
             return l to r
         }
 

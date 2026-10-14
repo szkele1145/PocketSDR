@@ -30,7 +30,7 @@ sealed class Biquad {
             b1 = (1.0 - cw).toFloat()
             b2 = ((1.0 - cw) / 2.0).toFloat()
             a1 = (-2.0 * cw).toFloat()
-            a2 = ((1.0 + alpha)).toFloat()
+            a2 = (1.0 - alpha).toFloat()
             val g = (1.0 + alpha).toFloat()
             b0 /= g; b1 /= g; b2 /= g; a1 /= g; a2 /= g
         }
@@ -45,7 +45,7 @@ sealed class Biquad {
             b1 = (-(1.0 + cw)).toFloat()
             b2 = ((1.0 + cw) / 2.0).toFloat()
             a1 = (-2.0 * cw).toFloat()
-            a2 = ((1.0 + alpha)).toFloat()
+            a2 = (1.0 - alpha).toFloat()
             val g = (1.0 + alpha).toFloat()
             b0 /= g; b1 /= g; b2 /= g; a1 /= g; a2 /= g
         }
@@ -60,7 +60,7 @@ sealed class Biquad {
             b1 = 0f
             b2 = -(sw / 2.0).toFloat()
             a1 = (-2.0 * cw).toFloat()
-            a2 = (1.0 + alpha).toFloat()
+            a2 = (1.0 - alpha).toFloat()
             val g = (1.0 + alpha).toFloat()
             b0 /= g; b1 /= g; b2 /= g; a1 /= g; a2 /= g
         }
