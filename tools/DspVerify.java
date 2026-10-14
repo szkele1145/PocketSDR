@@ -147,6 +147,58 @@ public class DspVerify {
 
     static int fails = 0;
 
+    // ==== HilbertFir + SsbDemod（对照 HilbertFir.kt）====
+    static class HilbertFir {
+        final float[] h, delay;
+        final int taps;
+        int pos = 0;
+        HilbertFir(int taps) {
+            this.taps = taps;
+            h = new float[taps];
+            delay = new float[taps];
+            int m = taps - 1;
+            for (int n = 0; n < taps; n++) {
+                int k = n - m / 2;
+                // 环形卷积方向修正：h[n] 的奇对称在 idx 反向遍历时等效取负
+                float c = (k % 2 == 0) ? 0f : (float) (-2.0 / (Math.PI * k));
+                double w = 0.54 - 0.46 * Math.cos(2 * Math.PI * n / m);
+                h[n] = (float) (c * w);
+            }
+        }
+        int groupDelay() { return (taps - 1) / 2; }
+        float process(float x) {
+            delay[pos] = x;
+            pos = (pos + 1 == taps) ? 0 : pos + 1;
+            float acc = 0;
+            int idx = pos;
+            for (int k = 0; k < taps; k++) {
+                acc += h[k] * delay[idx];
+                idx = (idx + 1 == taps) ? 0 : idx + 1;
+            }
+            return acc;
+        }
+        static class Aligner {
+            final float[] buf; int pos = 0;
+            Aligner(int d) { buf = new float[d + 1]; }
+            float process(float x) {
+                float out = buf[pos];
+                buf[pos] = x;
+                pos = (pos + 1) % buf.length;
+                return out;
+            }
+        }
+    }
+
+    static class SsbDemod {
+        final HilbertFir hilb = new HilbertFir(65);
+        final HilbertFir.Aligner align = new HilbertFir.Aligner(32);
+        float demodulate(float i, float q, boolean upper) {
+            float di = align.process(i);
+            float hq = hilb.process(q);
+            return upper ? di - hq : di + hq;
+        }
+    }
+
     static void check(String name, boolean ok, String detail) {
         System.out.println((ok ? "[PASS] " : "[FAIL] ") + name + "  " + detail);
         if (!ok) fails++;
@@ -230,6 +282,36 @@ public class DspVerify {
             System.out.printf("  诊断: cos(2φ−38k)均值=%.3f (1=对齐 0=正交)%n", align);
             check("立体声 PLL 锁定", dec.lockSmooth > 0.5f, "lock=" + dec.lockSmooth);
             check("立体声 L/R 分离", rmsL > rmsR * 2, "rmsL=" + rmsL + " rmsR=" + rmsR);
+        }
+        // 5) SSB: USB 通过上边带音、抑制下边带镜像音
+        {
+            double fs = 32000;
+            // 复信号 +1.5kHz（USB 应通过），-1.5kHz（镜像，USB 应抑制）
+            // I = cos(2π·1500t)+0.3cos(-2π·1500t) 复数域: 用 I/Q 合成两个复音
+            SsbDemod usb = new SsbDemod();
+            float passRms = 0, suppRms = 0;
+            int nP = 0, nS = 0;
+            for (int s = 0; s < 65536; s++) {
+                double t = s / fs;
+                // 只含 +1.5k 复音: I=cos, Q=sin → USB 输出 = 原音
+                float i1 = (float) Math.cos(2 * Math.PI * 1500 * t);
+                float q1 = (float) Math.sin(2 * Math.PI * 1500 * t);
+                float v = usb.demodulate(i1, q1, true);
+                if (s > 4096) { passRms += v * v; nP++; }
+            }
+            SsbDemod usb2 = new SsbDemod();
+            for (int s = 0; s < 65536; s++) {
+                double t = s / fs;
+                // 只含 -1.5k 复音: I=cos, Q=-sin → USB 应抑制
+                float i2 = (float) Math.cos(2 * Math.PI * 1500 * t);
+                float q2 = (float) -Math.sin(2 * Math.PI * 1500 * t);
+                float v = usb2.demodulate(i2, q2, true);
+                if (s > 4096) { suppRms += v * v; nS++; }
+            }
+            double pr = Math.sqrt(passRms / nP);
+            double sr = Math.sqrt(suppRms / nS);
+            System.out.printf("  诊断: USB 通过音 RMS=%.3f 抑制音 RMS=%.3f%n", pr, sr);
+            check("SSB 镜像抑制", pr > sr * 5 + 0.2, "pass=" + pr + " supp=" + sr + " 比=" + (pr / Math.max(sr, 1e-6)));
         }
         System.out.println(fails == 0 ? "\nALL PASS" : "\n" + fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);

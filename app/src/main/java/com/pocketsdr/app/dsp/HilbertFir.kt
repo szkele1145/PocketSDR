@@ -24,7 +24,8 @@ class HilbertFir(val taps: Int) {
         val m = taps - 1
         for (n in 0 until taps) {
             val k = n - m / 2   // 中心对称偏移
-            var c = if (k % 2 == 0) 0f else (2f / (PI.toFloat() * k))
+            // 环形卷积方向修正（经 DspVerify 验证）：奇对称系数在此遍历方向下需取负
+            var c = if (k % 2 == 0) 0f else (-2f / (PI.toFloat() * k))
             // Hamming 窗
             val w = 0.54 - 0.46 * kotlin.math.cos(2.0 * PI * n / m)
             h[n] = c * w.toFloat()
