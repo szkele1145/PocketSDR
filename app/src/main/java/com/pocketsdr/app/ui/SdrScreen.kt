@@ -406,10 +406,10 @@ fun SdrScreen(
                             value = gainIdx,
                             onValueChange = {
                                 gainIdx = it
-                                val gains = com.pocketsdr.app.HardwareControl(engine).lnaGains
+                                val gains = engine.lnaGains
                                 engine.setHardwareLnaGain(gains[it.toInt().coerceIn(0, gains.size - 1)])
                             },
-                            valueRange = 0f..(com.pocketsdr.app.HardwareControl(engine).lnaGains.size - 1).toFloat(),
+                            valueRange = 0f..(engine.lnaGains.size - 1).toFloat(),
                             modifier = Modifier.weight(1f),
                             colors = SliderDefaults.colors(
                                 thumbColor = Color(0xFFF6D55C),
@@ -417,7 +417,7 @@ fun SdrScreen(
                             )
                         )
                         Text(
-                            "%.1f dB".format(com.pocketsdr.app.HardwareControl(engine).lnaGains[gainIdx.toInt()] / 10f),
+                            "%.1f dB".format(engine.lnaGains[gainIdx.toInt()] / 10f),
                             fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace
                         )
                     }

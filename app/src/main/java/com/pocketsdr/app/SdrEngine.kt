@@ -52,6 +52,10 @@ class SdrEngine private constructor(
     val hardwareDirectSampling: Int
         get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.directSampling ?: 0
 
+    /** FC0013 LNA 增益档（tenths dB），librtlsdr 同表 */
+    val lnaGains: IntArray
+        get() = LNA_GAINS
+
     /** offset tuning（躲开 DC 的 1/f 噪声），仿真源 no-op */
     fun setHardwareOffsetTuning(on: Boolean): Boolean {
         val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
@@ -458,6 +462,12 @@ class SdrEngine private constructor(
         private const val S_ENERGY_N = 512                 // 能量统计样本上限
         // 鉴频输出已归一化 1.0=±128kHz（256ksps/2），广播满频偏 ±75kHz → ×1.7 满幅
         private const val WFM_DEV_SCALE = 1.7f
+
+        /** FC0013 LNA 增益档（tenths dB），librtlsdr 同表 */
+        private val LNA_GAINS = intArrayOf(
+            -99, -73, -65, -63, -60, -58, -54, 58, 61, 63, 65,
+            67, 68, 70, 71, 179, 181, 182, 184, 186, 188, 191, 197
+        )
 
         /** 仿真源引擎 */
         fun simulated(ui: UiBridge, centerFreq: Long = 98_000_000): SdrEngine =
