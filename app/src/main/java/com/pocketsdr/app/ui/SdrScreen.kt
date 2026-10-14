@@ -353,7 +353,13 @@ fun SdrScreen(
                     }
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(status, fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    // 状态行带版本号
+                    val ver = remember {
+                        try {
+                            "v" + context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                        } catch (_: Exception) { "" }
+                    }
+                    Text("$status · $ver", fontSize = 11.sp, color = Color(0xFF8FA3B8))
                     if (mode == SdrEngine.Mode.WFM && rdsName.isNotEmpty()) {
                         Text(
                             "RDS: $rdsName",
