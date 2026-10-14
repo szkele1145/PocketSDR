@@ -87,10 +87,9 @@ class MainActivity : ComponentActivity(), UiBridge {
         setContent { Host() }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        stopRxService()
-        if (wakeLock.isHeld) wakeLock.release()
+    override fun onStop() {
+        super.onStop()
+        // 后台切换时即保存状态（系统可能随时回收进程，不一定走 onDestroy）
         engine?.let { eng ->
             try {
                 val s = com.pocketsdr.app.FreqStore(this)
@@ -100,6 +99,12 @@ class MainActivity : ComponentActivity(), UiBridge {
                 s.lastVolume = eng.volume
             } catch (_: Exception) {}
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopRxService()
+        if (wakeLock.isHeld) wakeLock.release()
         unregisterReceiver(usbReceiver)
         engine?.close()
         engine = null

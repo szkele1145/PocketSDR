@@ -71,6 +71,17 @@ fun SdrScreen(
         }
     }
 
+    // 调谐/模式变化 → 刷新前台服务通知
+    LaunchedEffect(tuned, mode) {
+        try {
+            val intent = android.content.Intent(context, com.pocketsdr.app.RxService::class.java)
+                .putExtra("freq", tuned)
+                .putExtra("mode", mode.label)
+            if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
+            else context.startService(intent)
+        } catch (_: Exception) {}
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
