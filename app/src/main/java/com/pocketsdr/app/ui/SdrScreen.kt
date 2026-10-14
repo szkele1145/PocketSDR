@@ -293,7 +293,6 @@ fun SdrScreen(
                     Triple("航空", 121_500_000L, SdrEngine.Mode.AM),
                     Triple("2m", 145_500_000L, SdrEngine.Mode.NFM),
                     Triple("NOAA", 137_100_000L, SdrEngine.Mode.NFM),
-                    Triple("70cm", 435_000_000L, SdrEngine.Mode.NFM),
                     Triple("40m", 7_074_000L, SdrEngine.Mode.LSB),
                     Triple("20m", 14_300_000L, SdrEngine.Mode.USB)
                 )
@@ -518,11 +517,15 @@ fun SdrScreen(
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
-                    text.toFloatOrNull()?.let { mhz ->
-                        val f = (mhz * 1_000_000).toLong()
-                        engine.tuneTo(f)
-                        tuned = engine.tunedFreq
-                        center = engine.centerFreq
+                    // 容错：全角点/逗号转半角点；范围限制 0.1–1800 MHz
+                    val normalized = text.trim().replace('．', '.').replace(',', '.').replace('。', '.')
+                    normalized.toFloatOrNull()?.let { mhz ->
+                        if (mhz in 0.1f..1800f) {
+                            val f = (mhz * 1_000_000).toLong()
+                            engine.tuneTo(f)
+                            tuned = engine.tunedFreq
+                            center = engine.centerFreq
+                        }
                     }
                     showFreqInput = false
                 }) { Text("调谐") }
