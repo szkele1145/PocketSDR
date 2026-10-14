@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.SdrEngine
@@ -145,12 +147,56 @@ fun SdrScreen(
                         }
                 )
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    IconButton(onClick = { engine.tuneWithinSpan(tuned + 100_000); tuned += 100_000 }) {
-                        Icon(Icons.Filled.KeyboardArrowUp, "上100k", tint = Color(0xFF00E5FF))
+                    // 模式自适应步进：WFM 100k / NFM 12.5k / AM 25k / SSB 100Hz
+                    val step = remember(mode) {
+                        when (mode) {
+                            SdrEngine.Mode.WFM -> 100_000L
+                            SdrEngine.Mode.NFM -> 12_500L
+                            SdrEngine.Mode.AM -> 25_000L
+                            else -> 100L
+                        }
                     }
-                    Text("±100k", fontSize = 9.sp, color = Color(0xFF5A6B7F))
-                    IconButton(onClick = { engine.tuneWithinSpan(tuned - 100_000); tuned -= 100_000 })
-                    { Icon(Icons.Filled.KeyboardArrowDown, "下100k", tint = Color(0xFF00E5FF)) }
+                    // 长按连续步进（400ms 后每 60ms 一格）
+                    var repeatJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                    val scope = androidx.compose.runtime.rememberCoroutineScope()
+                    fun startRepeat(up: Boolean) {
+                        repeatJob?.cancel()
+                        repeatJob = scope.launch {
+                            kotlinx.coroutines.delay(400)
+                            while (true) {
+                                val f = engine.tunedFreq + if (up) step else -step
+                                engine.tuneWithinSpan(f)
+                                kotlinx.coroutines.delay(60)
+                            }
+                        }
+                    }
+                    IconButton(
+                        onClick = { engine.tuneWithinSpan(tuned + step); tuned += step },
+                        modifier = Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    startRepeat(true)
+                                    val released = tryAwaitRelease()
+                                    if (released) repeatJob?.cancel()
+                                }
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Filled.KeyboardArrowUp, "步进+", tint = Color(0xFF00E5FF))
+                    }
+                    Text("±${step / 1_000}k", fontSize = 9.sp, color = Color(0xFF5A6B7F))
+                    IconButton(
+                        onClick = { engine.tuneWithinSpan(tuned - step); tuned -= step },
+                        modifier = Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    startRepeat(false)
+                                    val released = tryAwaitRelease()
+                                    if (released) repeatJob?.cancel()
+                                }
+                            )
+                        }
+                    ) { Icon(Icons.Filled.KeyboardArrowDown, "步进-", tint = Color(0xFF00E5FF)) }
                 }
             }
 
