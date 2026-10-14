@@ -327,7 +327,7 @@ class SdrEngine private constructor(
             if (ncoPhase < 0.0) ncoPhase += TWO_PI
             val d = stageA.process(mixedI, mixedQ) ?: continue
             cnt++
-            if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
+            energy += (d.i * d.i + d.q * d.q).toDouble()
             // 鉴频：输出 1.0 = ±128kHz（满偏 ±75kHz → ×1.7 满幅）
             val mp = wfmDemod.demodulate(d.i, d.q) * WFM_DEV_SCALE
             rds.process(mp)  // RDS（57k 子载波在 MPX 域）
@@ -369,7 +369,7 @@ class SdrEngine private constructor(
             val a = stageA.process(mixedI, mixedQ) ?: continue
             val d = stageB.process(a.i, a.q) ?: continue
             cnt++
-            if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
+            energy += (d.i * d.i + d.q * d.q).toDouble()
             val v0 = when (m) {
                 Mode.NFM -> nfmAudioLp.process(nfmDemod.demodulate(d.i, d.q))
                 else -> amAudioHpf.process(amDemod.demodulate(d.i, d.q))
@@ -407,7 +407,7 @@ class SdrEngine private constructor(
             val a = stageA.process(mixedI, mixedQ) ?: continue
             val d = stageB.process(a.i, a.q) ?: continue
             cnt++
-            if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
+            energy += (d.i * d.i + d.q * d.q).toDouble()
             // 相位法 SSB：I ∓ H(Q) → 带通 → 慢速 AGC（弱信号可听、强信号不炸）
             val v0 = ssbDemod.demodulate(d.i, d.q, upper)
             val vbp = ssbAudioHpf.process(ssbAudioLp.process(v0))
@@ -459,7 +459,6 @@ class SdrEngine private constructor(
     companion object {
         private const val BLOCK = 16384                    // 16ms @1.024Msps
         private const val TWO_PI = 2.0 * PI
-        private const val S_ENERGY_N = 512                 // 能量统计样本上限
         // 鉴频输出已归一化 1.0=±128kHz（256ksps/2），广播满频偏 ±75kHz → ×1.7 满幅
         private const val WFM_DEV_SCALE = 1.7f
 
