@@ -1,6 +1,9 @@
 package com.pocketsdr.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
@@ -29,11 +32,15 @@ fun SpectrumWaterfall(
     waterfall: WaterfallBitmap,
     centerFreq: Long,
     tunedFreq: Long,
+    /** 显示 span（可小于 fullSpan = 数字变焦） */
     span: Long,
+    /** 全采样率对应 span（bin 映射基准） */
+    fullSpan: Long,
     dbMin: Float,
     dbMax: Float,
     onTune: (Long) -> Unit,
     onDragTune: (Long) -> Unit,
+    onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val image = remember(waterfall) { waterfall.bitmap.asImageBitmap() }
@@ -63,6 +70,20 @@ fun SpectrumWaterfall(
                 }
             )
         }
+        .pointerInput(span) {
+            // 捏合缩放 span（1.0 = 全采样率，越小放大越细）
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                do {
+                    val event = awaitPointerEvent()
+                    val zoomChange = event.calculateZoom()
+                    if (zoomChange != 1f) {
+                        onZoom(zoomChange)
+                        event.changes.forEach { it.consume() }
+                    }
+                } while (event.changes.any { it.pressed })
+            }
+        }
     ) {
         val w = size.width
         val h = size.height
@@ -76,21 +97,25 @@ fun SpectrumWaterfall(
             dstOffset = androidx.compose.ui.unit.IntOffset(0, specH.toInt()),
             srcSize = androidx.compose.ui.unit.IntSize(image.width, image.height))
 
-        // ---- 谱线（上 40%） ----
+        // ---- 谱线（上 40%，按显示 span 视角取 bin 子集） ----
         if (spectrum.isNotEmpty()) {
             val n = spectrum.size
             val dbRange = max(dbMax - dbMin, 1f)
-            val stepX = w / (n - 1)
-            var prevY = specH * (1f - (spectrum[0] - dbMin) / dbRange)
+            // 显示 span 占全采样率的比例 → bin 可见子区间
+            val fracL = ((centerFreq - span / 2) - (centerFreq - fullSpan / 2)).toFloat() / fullSpan
+            val fracR = fracL + span.toFloat() / fullSpan
+            val k0 = (fracL * (n - 1)).toInt().coerceIn(0, n - 1)
+            val k1 = (fracR * (n - 1)).toInt().coerceIn(k0 + 1, n)
+            val visN = k1 - k0
+            val stepX = w / max(visN - 1, 1)
+            var prevY = specH * (1f - (spectrum[k0] - dbMin) / dbRange)
             var prevX = 0f
-            // 用竖线段近似谱线（比 Path 快且够用）
-            for (k in 0 until n) {
-                val x = k * stepX
+            for (kk in 0 until visN) {
+                val k = k0 + kk
+                val x = kk * stepX
                 val y = specH * (1f - (spectrum[k] - dbMin) / dbRange)
-                // 填充柱
                 drawLine(specFill, Offset(x, y), Offset(x, specH), strokeWidth = stepX + 1f)
-                // 连线
-                if (k > 0) drawLine(specColor, Offset(prevX, prevY), Offset(x, y), strokeWidth = 2f)
+                if (kk > 0) drawLine(specColor, Offset(prevX, prevY), Offset(x, y), strokeWidth = 2f)
                 prevX = x; prevY = y
             }
         }

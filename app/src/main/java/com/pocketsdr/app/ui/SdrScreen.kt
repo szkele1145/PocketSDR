@@ -58,6 +58,8 @@ fun SdrScreen(
     var squelch by remember { mutableStateOf(engine.squelchDb) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
     var center by remember { mutableStateOf(engine.centerFreq) }
+    // 显示 span（数字变焦）：1.024M 全景 → 最小 128k
+    var viewSpan by remember { mutableStateOf(engine.sampleRate.toLong()) }
     var recording by remember { mutableStateOf(engine.isRecording) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
@@ -124,7 +126,8 @@ fun SdrScreen(
                     waterfall = waterfall,
                     centerFreq = center,
                     tunedFreq = tuned,
-                    span = engine.sampleRate.toLong(),
+                    span = viewSpan,
+                    fullSpan = engine.sampleRate.toLong(),
                     dbMin = -90f, dbMax = 0f,
                     onTune = { f ->
                         engine.tuneWithinSpan(f)
@@ -134,6 +137,11 @@ fun SdrScreen(
                         engine.recenter(center - delta)
                         center = engine.centerFreq
                         tuned = engine.tunedFreq
+                    },
+                    onZoom = { z ->
+                        // 捏合: span 限制在 [128k, 采样率]，双指张开缩小 span=放大
+                        val s = (viewSpan / z).toLong()
+                        viewSpan = s.coerceIn(128_000L, engine.sampleRate.toLong())
                     },
                     modifier = Modifier.fillMaxSize()
                 )
