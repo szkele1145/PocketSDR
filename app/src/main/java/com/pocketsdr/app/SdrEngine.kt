@@ -112,7 +112,10 @@ class SdrEngine private constructor(
     private val specA = FloatArray(fftSize)
     private val specB = FloatArray(fftSize)
     private var specFlip = false
-    val latestSpectrum: FloatArray get() = if (specFlip) specA else specB
+    /** 谱线 EMA 平滑缓冲（上升快跟/下降慢衰减，SDR# 余晖风格） */
+    private val specSmooth = FloatArray(fftSize)
+    /** UI 谱线读平滑值（瀑布用原始值） */
+    val latestSpectrum: FloatArray get() = specSmooth
     private val fftDb = FloatArray(fftSize)
 
     // 瀑布行累积计数
@@ -216,11 +219,16 @@ class SdrEngine private constructor(
         val scaleInv = 1f / (fftSize * fftSize / 4f)
         val half = fftSize / 2
         val out = if (specFlip) specB else specA
+        val smooth = specSmooth   // 谱线专用平滑缓冲
         for (k in 0 until fftSize) {
             val src = (k + half) and (fftSize - 1)
-            fftDb[k] = 10f * (Math.log10((fftPower[src] * scaleInv).toDouble() + 1e-12)).toFloat()
+            val db = 10f * (Math.log10((fftPower[src] * scaleInv).toDouble() + 1e-12)).toFloat()
+            out[k] = db           // 瀑布/原始谱：瞬时值
+            // 谱线 EMA：上升快跟、下降慢衰减（SDR# 风格余晖）
+            val prev = smooth[k]
+            smooth[k] = if (db > prev) db * 0.55f + prev * 0.45f
+                        else db * 0.12f + prev * 0.88f
         }
-        System.arraycopy(fftDb, 0, out, 0, fftSize)
         specFlip = !specFlip
         if (++fftCount % 4 == 0) { // ~15.5 行/秒 瀑布
             ui.pushWaterfallRow(out.copyOf())
