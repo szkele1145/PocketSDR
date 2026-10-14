@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.VolumeUp
@@ -62,6 +63,7 @@ fun SdrScreen(
     var showFavorites by remember { mutableStateOf(false) }
     var showScan by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
+    var showRecordings by remember { mutableStateOf(false) }
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
@@ -287,7 +289,9 @@ fun SdrScreen(
                     } else {
                         recording = engine.startRecording(context)
                     }
-                }, modifier = Modifier.size(36.dp)) {
+                }, modifier = Modifier.size(36.dp).pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { showRecordings = true })
+                }) {
                     Icon(
                         if (recording) Icons.Filled.StopCircle else Icons.Filled.RadioButtonUnchecked,
                         "录音",
@@ -570,6 +574,10 @@ fun SdrScreen(
     }
 
     // ---- 日志面板对话框 ----
+    if (showRecordings) {
+        RecordingsDialog(onDismiss = { showRecordings = false })
+    }
+
     if (showLog) {
         val logLines = remember { com.pocketsdr.app.SdrLog.dump() }
         androidx.compose.material3.AlertDialog(
