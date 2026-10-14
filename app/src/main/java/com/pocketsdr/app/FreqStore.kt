@@ -74,12 +74,16 @@ class FreqStore(private val context: Context) {
             SdrEngine.Mode.WFM -> 0
             SdrEngine.Mode.NFM -> 1
             SdrEngine.Mode.AM -> 2
+            SdrEngine.Mode.USB -> 3
+            SdrEngine.Mode.LSB -> 4
         }
 
         fun modeFromIndex(i: Int): SdrEngine.Mode = when (i) {
             0 -> SdrEngine.Mode.WFM
             1 -> SdrEngine.Mode.NFM
-            else -> SdrEngine.Mode.AM
+            2 -> SdrEngine.Mode.AM
+            3 -> SdrEngine.Mode.USB
+            else -> SdrEngine.Mode.LSB
         }
     }
 }

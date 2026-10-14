@@ -84,6 +84,15 @@ class MainActivity : ComponentActivity(), UiBridge {
 
     override fun onDestroy() {
         super.onDestroy()
+        engine?.let { eng ->
+            try {
+                val s = com.pocketsdr.app.FreqStore(this)
+                s.lastFreq = eng.tunedFreq
+                s.lastCenter = eng.centerFreq
+                s.lastMode = com.pocketsdr.app.FreqStore.modeIndex(eng.mode)
+                s.lastVolume = eng.volume
+            } catch (_: Exception) {}
+        }
         unregisterReceiver(usbReceiver)
         engine?.close()
         engine = null
@@ -127,7 +136,7 @@ class MainActivity : ComponentActivity(), UiBridge {
     }
 
     /** 切到真实硬件（USB 权限已授予） */
-    private fun switchToHardware(device: UsbDevice) {
+    private fun switchToHardware(device: UsbDevice, centerHint: Long = 98_000_000, tuneHint: Long = 98_100_000) {
         try {
             val conn = usbManager.openDevice(device)
             if (conn == null) {
@@ -135,8 +144,14 @@ class MainActivity : ComponentActivity(), UiBridge {
                 return
             }
             val oldEngine = engine
+            val store = com.pocketsdr.app.FreqStore(this)
             val src = RtlUsbSource(conn, device, 1_024_000L)
-            engine = SdrEngine.withSource(src, this).also { it.start() }
+            engine = SdrEngine.withSource(src, this).also {
+                // RtlUsbSource 构造时已按默认 98M 调谐；先停旧引擎再调新频率
+                it.start()
+                it.tuneTo(tuneHint)
+                restoreCommon(it, store)
+            }
             oldEngine?.close()
             pushStatus("RTL-SDR 已连接 · FC0013")
         } catch (e: Exception) {
@@ -155,15 +170,26 @@ class MainActivity : ComponentActivity(), UiBridge {
 
     private fun startEngine() {
         if (engine != null) return
+        val store = com.pocketsdr.app.FreqStore(this)
+        val lastF = store.lastFreq
+        val lastC = store.lastCenter
         // 已插着设备且有权限？直接上硬件
         val dev = usbManager.deviceList.values.firstOrNull { isRtlDevice(it) }
         if (dev != null && usbManager.hasPermission(dev)) {
-            switchToHardware(dev)
+            switchToHardware(dev, lastC, lastF)
         } else {
-            engine = SdrEngine.simulated(this, 98_000_000).also { it.start() }
+            engine = SdrEngine.simulated(this, lastC).also {
+                it.tuneWithinSpan(lastF)
+                restoreCommon(it, store)
+            }
             pushStatus("仿真模式 · 插入 RTL-SDR 自动连接")
         }
         engineReady = true
+    }
+
+    private fun restoreCommon(eng: SdrEngine, store: com.pocketsdr.app.FreqStore) {
+        eng.selectMode(com.pocketsdr.app.FreqStore.modeFromIndex(store.lastMode))
+        eng.volume = store.lastVolume
     }
 
     private fun isRtlDevice(d: UsbDevice): Boolean =

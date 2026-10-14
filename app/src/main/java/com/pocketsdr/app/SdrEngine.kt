@@ -27,7 +27,7 @@ class SdrEngine private constructor(
     private val source: IQSource,
     private val ui: UiBridge
 ) {
-    enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM") }
+    enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------
     @Volatile var mode: Mode = Mode.WFM
@@ -72,6 +72,9 @@ class SdrEngine private constructor(
     private val amDemod = Demodulators.AmDemod()
     private val nfmAudioLp = Biquad.Lowpass(3400f, 32_000f)
     private val amAudioHpf = Biquad.Highpass(120f, 32_000f)
+    private val ssbDemod = com.pocketsdr.app.dsp.HilbertFir.Companion.SsbDemod(65)
+    private val ssbAudioLp = Biquad.Lowpass(2700f, 32_000f)   // SSB 语音带宽
+    private val ssbAudioHpf = Biquad.Highpass(300f, 32_000f)  // 去低频隆隆声
 
     // ---------- 音频 ----------
     private val audioRate = 32_000
@@ -164,6 +167,8 @@ class SdrEngine private constructor(
         audioDecL.reset(); audioDecR.reset()
         wfmDemod.reset(); nfmDemod.reset(); amDemod.reset()
         nfmAudioLp.reset(); amAudioHpf.reset()
+        ssbDemod.reset(); ssbAudioLp.reset(); ssbAudioHpf.reset()
+        stereo.reset()
         ncoPhase = 0.0
     }
 
@@ -200,6 +205,7 @@ class SdrEngine private constructor(
         when (m) {
             Mode.WFM -> demodWfm(n, lo)
             Mode.NFM, Mode.AM -> demodNarrow(n, lo, m)
+            Mode.USB, Mode.LSB -> demodSsb(n, lo, m == Mode.USB)
         }
     }
 
@@ -279,7 +285,41 @@ class SdrEngine private constructor(
         }
     }
 
-    /** 静噪门：IF 功率 dBFS 与阈值比较（带 20% 迟滞防抖） */
+    /** SSB：NCO → ÷4 → ÷8 → Hilbert 相位法(32k) → 带通 → 直出 */
+    private fun demodSsb(n: Int, lo: Double, upper: Boolean) {
+        val track = audioTrack ?: return
+        var frames = 0
+        var energy = 0.0
+        var cnt = 0
+        for (s in 0 until n) {
+            val i = iqBuf[s * 2]
+            val q = iqBuf[s * 2 + 1]
+            val c = cos(ncoPhase).toFloat()
+            val sn = (-sin(ncoPhase)).toFloat()
+            val mixedI = i * c - q * sn
+            val mixedQ = i * sn + q * c
+            ncoPhase += lo
+            if (ncoPhase > TWO_PI) ncoPhase -= TWO_PI
+            if (ncoPhase < 0.0) ncoPhase += TWO_PI
+            val a = stageA.process(mixedI, mixedQ) ?: continue
+            val d = stageB.process(a.i, a.q) ?: continue
+            cnt++
+            if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
+            // 相位法 SSB：I ∓ H(Q)
+            val v0 = ssbDemod.demodulate(d.i, d.q, upper)
+            val v = (ssbAudioHpf.process(ssbAudioLp.process(v0))) * volume * 32767f * 3f
+            val cv = v.coerceIn(-32767f, 32767f)
+            audioFrames[frames * 2] = cv.toInt().toShort()
+            audioFrames[frames * 2 + 1] = cv.toInt().toShort()
+            frames++
+        }
+        applySquelch(energy / kotlin.math.max(cnt, 1))
+        if (frames > 0 && squelchOpen) {
+            track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
+            recorder?.write(audioFrames, frames * 2)
+        }
+    }
+
     private fun applySquelch(avgPower: Double) {
         val db = 10.0 * Math.log10(avgPower + 1e-12)
         signalDb = db.toFloat()
