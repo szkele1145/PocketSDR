@@ -706,7 +706,7 @@ public class DspVerify {
         final float[] delayBuf = new float[delayHalf];
         int delayPos = 0;
         final Biquad clockBp = Biquad.bandpass(1187.5f, fs2, 8f);
-        // ===== Gardner 位同步（验证最优基线）=====
+        // ===== Gardner 2x（已验证最优基线）=====
         double clockVco = 0, gardnerTrim = 0;
         final double clockVcoInc = 2 * Math.PI * 1187.5 / fs2;
         boolean lastSymbolPhase = false;
@@ -758,7 +758,7 @@ public class DspVerify {
             delayBuf[delayPos] = base;
             delayPos = (delayPos + 1 == delayBuf.length) ? 0 : delayPos + 1;
 
-            // ===== Gardner TED 位同步（2 倍过采样数字 PI 环）——已验证最优基线 =====
+            // ===== Gardner TED 2x 过采样（最优基线）=====
             clockVco += clockVcoInc + gardnerTrim;
             if (clockVco > 2 * Math.PI) clockVco -= 2 * Math.PI;
             boolean symbolNow = Math.sin(clockVco) >= 0;
@@ -774,9 +774,6 @@ public class DspVerify {
                     int bit = (cur * prevSymForDecision < 0) ? 1 : 0;
                     prevSymForDecision = cur;
                     bitDecisions++;
-                    if (eyeDiagnostics && bitDecisions < 2000) {
-                        eyeSamples[eyeCount++ % eyeSamples.length] = cur;
-                    }
                     pushBit(bit);
                 } else {
                     midSample = base;

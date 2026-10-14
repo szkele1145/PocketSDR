@@ -26,7 +26,7 @@
 
 ## 待办
 
-1. RDS 位同步精调（Gardner BER 10% → 目标 <1%，方案：4x 过采样扫描）
+1. RDS 位同步精调：已系统排除 4 种假设（4x 过采样/判决点位置/Costas 抖动/积分转储相位对齐），BER 恒定 ~10% 的根因待新思路（候选：块同步字训练序列法）。当前 2x Gardner 基线（块锁 10）为产品状态
 2. RTL-SDR 到货真机联调（日志面板就绪）
 3. **GitHub Actions：需用户提供带 workflow scope 的 token**（workflow 文件已在本地）
 
