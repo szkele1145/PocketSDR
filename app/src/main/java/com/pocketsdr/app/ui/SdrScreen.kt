@@ -534,8 +534,9 @@ fun SdrScreen(
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
-                    if (scanProgress < 0) {
+                    if (scanProgress < 0 || scanProgress > 100) {
                         scanProgress = 0
+                        scanFound = emptyList()
                         val scanner = com.pocketsdr.app.FmScanner(
                             engine,
                             onProgress = { p, n ->
@@ -548,10 +549,22 @@ fun SdrScreen(
                         )
                         scanner.scan(87_500_000, 108_000_000)
                     }
-                }) { Text(if (scanProgress < 0) "开始扫描" else "停止") }
+                }) { Text(if (scanProgress < 0) "开始扫描" else if (scanProgress > 100) "重新扫描" else "扫描中…") }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showScan = false }) { Text("关闭") }
+                androidx.compose.foundation.layout.Row {
+                    // 扫描完成 → 全部存收藏
+                    if (scanProgress > 100 && scanFound.isNotEmpty()) {
+                        androidx.compose.material3.TextButton(onClick = {
+                            scanFound.forEach { st ->
+                                store.addFavorite(com.pocketsdr.app.FreqStore.Ch(
+                                    formatFreq(st.freq), st.freq, 0))
+                            }
+                            favorites = store.getFavorites()
+                        }) { Text("★ 全存收藏") }
+                    }
+                    androidx.compose.material3.TextButton(onClick = { showScan = false }) { Text("关闭") }
+                }
             }
         )
     }
