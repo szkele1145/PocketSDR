@@ -118,6 +118,7 @@ class SdrEngine private constructor(
     private val ssbAudioLp = Biquad.Lowpass(2700f, 32_000f)   // SSB 语音带宽
     private val ssbAudioHpf = Biquad.Highpass(300f, 32_000f)  // 去低频隆隆声
     private val ssbAgc = com.pocketsdr.app.dsp.AudioAgc(32_000f, targetPeak = 0.3f)
+    private val narrowAgc = com.pocketsdr.app.dsp.AudioAgc(32_000f, targetPeak = 0.35f)
 
     // ---------- 音频 ----------
     private val audioRate = 32_000
@@ -246,7 +247,7 @@ class SdrEngine private constructor(
         wfmDemod.reset(); nfmDemod.reset(); amDemod.reset()
         nfmAudioLp.reset(); amAudioHpf.reset()
         ssbDemod.reset(); ssbAudioLp.reset(); ssbAudioHpf.reset()
-        ssbAgc.reset()
+        ssbAgc.reset(); narrowAgc.reset()
         stereo.reset()
         ncoPhase = 0.0
     }
@@ -356,12 +357,15 @@ class SdrEngine private constructor(
             val d = stageB.process(a.i, a.q) ?: continue
             cnt++
             if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
-            val v = when (m) {
-                Mode.NFM -> nfmAudioLp.process(nfmDemod.demodulate(d.i, d.q)) * volume * 32767f * 2.5f
-                else -> amAudioHpf.process(amDemod.demodulate(d.i, d.q)) * volume * 32767f * 2f
-            }.coerceIn(-32767f, 32767f)
-            audioFrames[frames * 2] = v.toInt().toShort()
-            audioFrames[frames * 2 + 1] = v.toInt().toShort()
+            val v0 = when (m) {
+                Mode.NFM -> nfmAudioLp.process(nfmDemod.demodulate(d.i, d.q))
+                else -> amAudioHpf.process(amDemod.demodulate(d.i, d.q))
+            }
+            // 慢速 AGC：远台信号起伏拉平（AM 调制深度保真：目标 0.35 稍松）
+            val v = narrowAgc.process(v0) * volume * 32767f
+            val cv = v.coerceIn(-32767f, 32767f)
+            audioFrames[frames * 2] = cv.toInt().toShort()
+            audioFrames[frames * 2 + 1] = cv.toInt().toShort()
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
