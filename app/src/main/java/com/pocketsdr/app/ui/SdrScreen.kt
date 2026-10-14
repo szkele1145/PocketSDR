@@ -218,7 +218,13 @@ fun SdrScreen(
                     ) {
                         Icon(Icons.Filled.KeyboardArrowUp, "步进+", tint = Color(0xFF00E5FF))
                     }
-                    Text("±${step / 1_000}k", fontSize = 9.sp, color = Color(0xFF5A6B7F))
+                    // 步长标签：≥1MHz 显示 M，≥1kHz 显示 k（保留 0.5 精度），<1k 显示 Hz
+                    val stepLabel = when {
+                        step >= 1_000_000 -> "±${"%.1f".format(step / 1e6)}M"
+                        step >= 1_000 -> if (step % 1_000 == 0L) "±${step / 1_000}k" else "±${"%.1f".format(step / 1e3)}k"
+                        else -> "±${step}Hz"
+                    }
+                    Text(stepLabel, fontSize = 9.sp, color = Color(0xFF5A6B7F))
                     IconButton(
                         onClick = { engine.tuneWithinSpan(tuned - step); tuned -= step },
                         modifier = Modifier.pointerInput(Unit) {
