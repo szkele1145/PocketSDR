@@ -13,8 +13,8 @@ android {
         applicationId = "com.pocketsdr.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 37
-        versionName = "0.9.11"
+        versionCode = 38
+        versionName = "0.9.12"
     }
 
     buildTypes {

@@ -425,12 +425,26 @@ class SdrEngine private constructor(
         }
     }
 
+    private var openStreak = 0   // 连续超阈块计数（防毛刺开门）
+
     private fun applySquelch(avgPower: Double) {
         val db = 10.0 * Math.log10(avgPower + 1e-12)
         signalDb = db.toFloat()
-        squelchOpen = when {
-            squelchOpen -> db > squelchDb - 2.0   // 迟滞
-            else -> db > squelchDb
+        if (squelchOpen) {
+            // 已开：低于 阈值−3dB 才关（迟滞）
+            if (db < squelchDb - 3.0) {
+                squelchOpen = false
+                openStreak = 0
+            }
+        } else {
+            // 未开：连续 2 块超阈才开（防单块毛刺）
+            if (db > squelchDb) {
+                if (++openStreak >= 2) {
+                    squelchOpen = true
+                }
+            } else {
+                openStreak = 0
+            }
         }
     }
 
