@@ -96,16 +96,17 @@ class SdrEngine private constructor(
     private var ncoPhase = 0.0
 
     // ---------- 抽取器 ----------
-    // 级 A：1.024M → 256k（÷4），截止 92kHz，129 抽头（阻带 105kHz < 128kHz 奈奎斯特）
-    private val stageA = ComplexDecimator(4, 129, 0.09f)
-    // 级 B：256k → 32k（÷8），截止 11.8kHz，阻带 15kHz < 16kHz
-    private val stageB = ComplexDecimator(8, 129, 0.046f)
+    // 级 A：1.024M → 256k（÷4），65 抽头（性能优化：129→65，129 抽头在低端机 WFM 链 ~270M MAC/s 超预算）
+    // 截止 92kHz；65 抽头 Hamming 阻带衰减 44dB，混叠分量在 940k+ 处被衰减后折回
+    private val stageA = ComplexDecimator(4, 65, 0.09f)
+    // 级 B：256k → 32k（÷8），65 抽头，截止 11.8kHz，阻带 15kHz < 16kHz
+    private val stageB = ComplexDecimator(8, 65, 0.046f)
 
     // ---------- 解调器 ----------
     private val wfmDemod = Demodulators.FmDemod()
     private val stereo = Demodulators.StereoDecoder(256_000f)  // 解码留在 256k（38k 子载波需要 fs>76k）
-    private val audioDecL = RealDecimator(8, 129, 0.049f)       // 256k → 32k L
-    private val audioDecR = RealDecimator(8, 129, 0.049f)       // 256k → 32k R
+    private val audioDecL = RealDecimator(8, 65, 0.049f)       // 256k → 32k L（65 抽头性能优化）
+    private val audioDecR = RealDecimator(8, 65, 0.049f)       // 256k → 32k R
     private val deempL = Demodulators.DeEmphasis(50f, 32_000f)
     private val deempR = Demodulators.DeEmphasis(50f, 32_000f)
     /** RDS 解码（WFM 路径 256k 喂入） */
