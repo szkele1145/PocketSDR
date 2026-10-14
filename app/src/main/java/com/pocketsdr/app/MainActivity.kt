@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var engine: SdrEngine? = null
     private val uiHandler = Handler(Looper.getMainLooper())
     private lateinit var usbManager: UsbManager
+    private lateinit var wakeLock: android.os.PowerManager.WakeLock
 
     // Compose 状态
     private var spectrum by mutableStateOf(FloatArray(0))
@@ -69,6 +70,10 @@ class MainActivity : ComponentActivity(), UiBridge {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        // 收音机场景保持 CPU 运转（屏幕可熄灭省电）
+        wakeLock = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PocketSDR::rx")
+            .also { it.setReferenceCounted(false); it.acquire() }
 
         // USB 权限广播接收器
         val filter = IntentFilter().apply {
@@ -84,6 +89,8 @@ class MainActivity : ComponentActivity(), UiBridge {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopRxService()
+        if (wakeLock.isHeld) wakeLock.release()
         engine?.let { eng ->
             try {
                 val s = com.pocketsdr.app.FreqStore(this)
@@ -181,10 +188,29 @@ class MainActivity : ComponentActivity(), UiBridge {
             engine = SdrEngine.simulated(this, lastC).also {
                 it.tuneWithinSpan(lastF)
                 restoreCommon(it, store)
+                it.start()
             }
             pushStatus("仿真模式 · 插入 RTL-SDR 自动连接")
         }
+        startRxService(lastF)
         engineReady = true
+    }
+
+    private fun startRxService(freq: Long) {
+        try {
+            val intent = Intent(this, com.pocketsdr.app.RxService::class.java)
+                .putExtra("freq", freq)
+                .putExtra("mode", "WFM")
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun stopRxService() {
+        try { stopService(Intent(this, com.pocketsdr.app.RxService::class.java)) } catch (_: Exception) {}
     }
 
     private fun restoreCommon(eng: SdrEngine, store: com.pocketsdr.app.FreqStore) {
