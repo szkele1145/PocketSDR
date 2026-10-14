@@ -100,7 +100,7 @@ fun SdrScreen(
         // ===== 频谱区 =====
         Box(Modifier.fillMaxWidth().weight(0.52f)) {
             Column(Modifier.fillMaxSize()) {
-                // 频率刻度行
+                // 频率刻度行（跟随 viewSpan 变焦视角）
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -109,7 +109,7 @@ fun SdrScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "%.1f".format((center - engine.sampleRate / 2) / 1e6) + "M",
+                        "%.1f".format((center - viewSpan / 2) / 1e6) + "M",
                         fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
                     )
                     Text(
@@ -117,7 +117,7 @@ fun SdrScreen(
                         fontSize = 9.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace
                     )
                     Text(
-                        "%.1f".format((center + engine.sampleRate / 2) / 1e6) + "M",
+                        "%.1f".format((center + viewSpan / 2) / 1e6) + "M",
                         fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
                     )
                 }
