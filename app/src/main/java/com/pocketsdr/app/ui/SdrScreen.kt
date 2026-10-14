@@ -589,7 +589,8 @@ fun SdrScreen(
                                 scanProgress = p
                             },
                             onDone = { stations ->
-                                scanFound = stations
+                                // 按信号强度排序（强的台排前面，好台优先）
+                                scanFound = stations.sortedByDescending { it.levelDb }
                                 scanProgress = 101  // 完成标记
                             }
                         )
