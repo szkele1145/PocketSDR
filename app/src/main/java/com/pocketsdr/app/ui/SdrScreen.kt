@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.VolumeUp
@@ -55,6 +56,9 @@ fun SdrScreen(
     var recording by remember { mutableStateOf(engine.isRecording) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
+    var showScan by remember { mutableStateOf(false) }
+    var scanProgress by remember { mutableStateOf(-1) }
+    var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
     var favorites by remember { mutableStateOf(store.getFavorites()) }
 
@@ -197,6 +201,9 @@ fun SdrScreen(
                 IconButton(onClick = { showFavorites = true }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Filled.StarBorder, "收藏", tint = Color(0xFFF6D55C))
                 }
+                IconButton(onClick = { showScan = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.Search, "搜台", tint = Color(0xFF7DF3FF))
+                }
             }
 
             // ---- 音量/静噪 ----
@@ -325,6 +332,64 @@ fun SdrScreen(
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showFavorites = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // ---- 搜台对话框 ----
+    if (showScan) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                showScan = false
+                scanProgress = -1
+            },
+            title = { Text(if (scanProgress >= 0) "搜索中… $scanProgress% (${scanFound.size} 台)" else "FM 自动搜台") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text(
+                        if (scanProgress >= 0) "扫描 87.5–108 MHz，请稍候"
+                        else "扫描整个 FM 广播波段（87.5–108 MHz），找到所有信号峰值。约需 20 秒。",
+                        fontSize = 13.sp
+                    )
+                    if (scanProgress >= 0) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { scanProgress / 100f },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            color = Color(0xFF00E5FF)
+                        )
+                    }
+                    scanFound.take(12).forEach { st ->
+                        androidx.compose.material3.TextButton(onClick = {
+                            engine.tuneTo(st.freq)
+                            tuned = engine.tunedFreq
+                            center = engine.centerFreq
+                            showScan = false
+                        }) {
+                            Text("${formatFreq(st.freq)}   ${st.levelDb.toInt()} dBFS", fontSize = 14.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    if (scanProgress < 0) {
+                        scanProgress = 0
+                        val scanner = com.pocketsdr.app.FmScanner(
+                            engine,
+                            onProgress = { p, n ->
+                                scanProgress = p
+                            },
+                            onDone = { stations ->
+                                scanFound = stations
+                                scanProgress = 101  // 完成标记
+                            }
+                        )
+                        scanner.scan(87_500_000, 108_000_000)
+                    }
+                }) { Text(if (scanProgress < 0) "开始扫描" else "停止") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showScan = false }) { Text("关闭") }
             }
         )
     }
