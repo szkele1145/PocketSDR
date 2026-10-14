@@ -4,6 +4,7 @@ import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
+import com.pocketsdr.app.SdrLog
 
 /** RTL tuner 类型（独立顶级枚举，避免 companion 嵌套解析问题） */
 enum class RtlTuner { UNKNOWN, FC0013, R820T }
@@ -250,6 +251,58 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
         }
         setI2cRepeater(false)
         return RtlTuner.UNKNOWN
+    }
+
+    // ---------- 直接采样模式（HF 短波，librtlsdr rtlsdr_set_direct_sampling 移植）----------
+    // on: 0=关闭(tuner 正常), 1=I-ADC 直接采样, 2=Q-ADC 直接采样
+    /**
+     * 设置直接采样模式。on=1/2 时：关 Zero-IF、只开对应 ADC 通路、
+     * 调谐由 IF 频率寄存器实现（tuner 不参与）。on=0 恢复正常 tuner 模式。
+     */
+    fun setDirectSampling(on: Int, tunerExit: (() -> Unit)?, tunerInit: (() -> Unit)?): Boolean {
+        setI2cRepeater(false)
+        var r = true
+        if (on == 1 || on == 2) {
+            tunerExit?.invoke()  // tuner 退出（FC0013 无 standby，简单跳过）
+        }
+        if (on != 0) {
+            // 关 Zero-IF
+            r = r && demodWriteReg(1, 0xb1, 0x1a, 1)
+            // 关频谱反转
+            r = r && demodWriteReg(1, 0x15, 0x00, 1)
+            // 只开 I-ADC 输入
+            r = r && demodWriteReg(0, 0x08, 0x4d, 1)
+            // I/Q ADC 交换（选输入口）
+            r = r && demodWriteReg(0, 0x06, if (on == 2) 0x90 else 0x80, 1)
+            SdrLog.i("RTL", "直接采样模式 on=$on")
+        } else {
+            // 恢复 tuner 模式
+            tunerInit?.invoke()
+            // IF=0（Zero-IF）
+            setIfFreq(0)
+            // 开 I+Q ADC
+            r = r && demodWriteReg(0, 0x08, 0xcd, 1)
+            // 开 Zero-IF
+            r = r && demodWriteReg(1, 0xb1, 0x1b, 1)
+            // 默认 ADC 数据通路
+            r = r && demodWriteReg(0, 0x06, 0x80, 1)
+            SdrLog.i("RTL", "恢复 tuner 模式")
+        }
+        return r
+    }
+
+    /** 设置 IF 频率（直接采样下调谐 = IF 频率，Zero-IF 模式 = 0） */
+    fun setIfFreq(freq: Long): Boolean {
+        setI2cRepeater(false)
+        // if_freq = -(freq * 2^22 / xtal)
+        val ifFreq = (-freq * (1L shl 22) / rtlXtal).toInt()
+        val hi = (ifFreq shr 16) and 0x3F
+        val mid = (ifFreq shr 8) and 0xFF
+        val lo = ifFreq and 0xFF
+        var r = demodWriteReg(1, 0x19, hi, 1)
+        r = r and demodWriteReg(1, 0x1a, mid, 1)
+        r = r and demodWriteReg(1, 0x1b, lo, 1)
+        return r
     }
 
     /** 设置采样率，返回实际速率 Hz（如请求 1.024M 得到精确 1024000） */

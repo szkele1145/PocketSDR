@@ -119,11 +119,16 @@ class RtlUsbSource(
 
     private fun retune() {
         if (closed) return
-        val t = tuner ?: return
         try {
-            rtl.setI2cRepeater(true)
-            t.setParams(centerFreq)
-            rtl.setI2cRepeater(false)
+            if (directSampling != 0) {
+                // 直接采样模式：调谐 = IF 频率
+                rtl.setIfFreq(centerFreq)
+            } else {
+                val t = tuner ?: return
+                rtl.setI2cRepeater(true)
+                t.setParams(centerFreq)
+                rtl.setI2cRepeater(false)
+            }
         } catch (_: Exception) {}
     }
 
@@ -145,6 +150,38 @@ class RtlUsbSource(
             tuner?.setGainMode(manual)
             rtl.setI2cRepeater(false)
         } catch (_: Exception) {}
+    }
+
+    // ---------- 直接采样模式（HF 短波）----------
+    @Volatile var directSampling = 0
+        private set
+
+    /** 开/关直接采样（0=关 1=I-ADC 2=Q-ADC）。开时调谐改走 IF 路径。 */
+    fun setDirectSampling(mode: Int): Boolean {
+        if (closed) return false
+        return try {
+            val ok = rtl.setDirectSampling(mode, tunerExit = null, tunerInit = {
+                // 恢复 tuner：重新初始化 FC0013
+                rtl.setI2cRepeater(true)
+                tuner?.init()
+                rtl.setI2cRepeater(false)
+            })
+            if (ok) {
+                directSampling = mode
+                if (mode != 0) {
+                    // 直接采样下调谐 = 设 IF 频率
+                    rtl.setIfFreq(centerFreq)
+                    SdrLog.i("SRC", "直接采样 $mode, IF=${centerFreq / 1000} kHz")
+                } else {
+                    // 恢复 tuner 调谐
+                    retune()
+                }
+            }
+            ok
+        } catch (e: Exception) {
+            SdrLog.e("SRC", "直接采样切换失败: ${e.message}")
+            false
+        }
     }
 
     override fun close() {

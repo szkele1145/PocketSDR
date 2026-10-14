@@ -339,7 +339,20 @@ fun SdrScreen(
             if (engine.isRealSource) {
                 var manualGain by remember { mutableStateOf(false) }
                 var gainIdx by remember { mutableStateOf(14f) }  // 默认 7.1dB 档
+                var hfDirect by remember { mutableStateOf(engine.hardwareDirectSampling != 0) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Switch(
+                        checked = hfDirect,
+                        onCheckedChange = {
+                            hfDirect = it
+                            engine.setHardwareDirectSampling(if (it) 1 else 0)
+                        },
+                        modifier = Modifier.size(36.dp),
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFF6D55C)
+                        )
+                    )
+                    Text("HF直采", fontSize = 11.sp, color = Color(0xFF8FA3B8))
                     androidx.compose.material3.Switch(
                         checked = manualGain,
                         onCheckedChange = {
@@ -351,7 +364,7 @@ fun SdrScreen(
                             checkedThumbColor = Color(0xFF00E5FF)
                         )
                     )
-                    Text("手动增益", fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    Text("增益", fontSize = 11.sp, color = Color(0xFF8FA3B8))
                     if (manualGain) {
                         Slider(
                             value = gainIdx,

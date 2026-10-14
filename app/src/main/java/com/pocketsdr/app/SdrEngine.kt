@@ -40,6 +40,17 @@ class SdrEngine private constructor(
     fun setHardwareGainMode(manual: Boolean) {
         (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.setGainMode(manual)
     }
+
+    /** 硬件直接采样模式（0=关 1=I-ADC 2=Q-ADC），HF 短波用 */
+    fun setHardwareDirectSampling(mode: Int): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
+        val ok = src.setDirectSampling(mode)
+        if (ok) resetDspState()
+        return ok
+    }
+
+    val hardwareDirectSampling: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.directSampling ?: 0
     enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------
