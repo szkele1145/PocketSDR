@@ -153,6 +153,11 @@ class SdrEngine private constructor(
 
     fun stop() {
         running = false
+        // 录音收尾（WAV 头回填），在杀线程前进行
+        recorder?.let { r ->
+            val path = r.stop()
+            if (path != null) ui.pushStatus("录音已保存: ${path.substringAfterLast('\\').substringAfterLast('/')}")
+        }
         dspThread?.join(2000)
         dspThread = null
         audioTrack?.let { try { it.stop(); it.release() } catch (_: Exception) {} }
