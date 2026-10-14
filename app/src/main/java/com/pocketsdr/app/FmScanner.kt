@@ -30,6 +30,7 @@ class FmScanner(
             val oldFreq = engine.tunedFreq
             val oldSquelch = engine.squelchDb
             val oldMode = engine.mode
+            engine.muted = true  // 扫描静音（防跳频爆音）
             try {
                 engine.selectMode(SdrEngine.Mode.NFM)  // 窄带测信号更准
                 engine.squelchDb = -120f               // 静噪全开防丢样本
@@ -61,6 +62,7 @@ class FmScanner(
             } catch (_: InterruptedException) {
             } finally {
                 // 恢复
+                engine.muted = false
                 engine.selectMode(oldMode)
                 engine.squelchDb = oldSquelch
                 engine.tuneWithinSpan(oldFreq)

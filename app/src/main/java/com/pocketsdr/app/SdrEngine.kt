@@ -45,6 +45,8 @@ class SdrEngine private constructor(
     // ---------- UI 可写状态 ----------
     @Volatile var mode: Mode = Mode.WFM
     @Volatile var volume: Float = 0.8f
+    /** 扫描时临时静音（防跳频爆音） */
+    @Volatile var muted: Boolean = false
     @Volatile var squelchDb: Float = -40f          // 静噪阈值 dBFS（-100..0）
     @Volatile private var _centerFreq: Long = 98_000_000
     @Volatile private var _tunedFreq: Long = 98_100_000
@@ -260,7 +262,7 @@ class SdrEngine private constructor(
             }
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0 && squelchOpen && !muted) {
             track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
             recorder?.write(audioFrames, frames * 2)
         }
@@ -295,7 +297,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0 && squelchOpen && !muted) {
             track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
             recorder?.write(audioFrames, frames * 2)
         }
@@ -330,7 +332,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0 && squelchOpen && !muted) {
             track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
             recorder?.write(audioFrames, frames * 2)
         }
