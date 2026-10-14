@@ -128,17 +128,31 @@ class RdsDecoder(private val fs: Float) {
         val segment = b[1] and 0x3
         val c1 = (b[2] shr 8) and 0xFF
         val c2 = b[2] and 0xFF
-        psChars[segment * 2] = if (c1 in 32..126) c1.toChar() else ' '
-        psChars[segment * 2 + 1] = if (c2 in 32..126) c2.toChar() else ' '
-        psSeen[segment] = true
-        if (psSeen.all { it }) {
-            val name = String(psChars).trim()
-            if (name.isNotEmpty() && name != stationName) {
-                stationName = name
-                dataLock = true
+        val ch1 = if (c1 in 32..126) c1.toChar() else ' '
+        val ch2 = if (c2 in 32..126) c2.toChar() else ' '
+        // 段级双重确认：同段连续 2 次相同才接受（跨帧表决滤随机错）
+        if (pendingSeg == segment && pendingC1 == ch1 && pendingC2 == ch2) {
+            psChars[segment * 2] = ch1
+            psChars[segment * 2 + 1] = ch2
+            psSeen[segment] = true
+            pendingSeg = -1
+            if (psSeen.all { it }) {
+                val name = String(psChars).trim()
+                if (name.isNotEmpty() && name != stationName) {
+                    stationName = name
+                    dataLock = true
+                }
             }
+        } else {
+            pendingSeg = segment
+            pendingC1 = ch1
+            pendingC2 = ch2
         }
     }
+
+    private var pendingSeg = -1
+    private var pendingC1 = ' '
+    private var pendingC2 = ' '
 
     companion object {
         private const val TWO_PI = 2.0 * Math.PI
