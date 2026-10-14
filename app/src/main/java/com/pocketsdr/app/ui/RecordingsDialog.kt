@@ -54,7 +54,7 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                     color = Color(0xFFD0DAE4), maxLines = 1)
                                 Text(
                                     "${SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(f.lastModified()))}  " +
-                                        "%.1f MB".format(f.length() / 1e6),
+                                        wavDuration(f) + "  " + "%.1f MB".format(f.length() / 1e6),
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F)
                                 )
                             }
@@ -95,4 +95,24 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
 private fun listFiles(context: android.content.Context): List<File> {
     val dir = File(context.getExternalFilesDir(null), "recordings")
     return dir.listFiles { f -> f.extension == "wav" }?.sortedByDescending { it.lastModified() } ?: emptyList()
+}
+
+/** 从 WAV 头解析时长显示（失败回退空串） */
+private fun wavDuration(f: File): String {
+    return try {
+        java.io.RandomAccessFile(f, "r").use { r ->
+            val h = ByteArray(44)
+            r.readFully(h)
+            // RIFF 头：byteRate @28, dataLen @40
+            val byteRate = ((h[31].toInt() and 0xFF) shl 24) or ((h[30].toInt() and 0xFF) shl 16) or
+                ((h[29].toInt() and 0xFF) shl 8) or (h[28].toInt() and 0xFF)
+            val dataLen = ((h[43].toInt() and 0xFF) shl 24) or ((h[42].toInt() and 0xFF) shl 16) or
+                ((h[41].toInt() and 0xFF) shl 8) or (h[40].toInt() and 0xFF)
+            if (byteRate > 0 && dataLen > 0) {
+                val sec = dataLen / byteRate
+                if (sec >= 3600) "%d:%02d:%02d".format(sec / 3600, (sec % 3600) / 60, sec % 60)
+                else "%d:%02d".format(sec / 60, sec % 60)
+            } else ""
+        }
+    } catch (_: Exception) { "" }
 }
