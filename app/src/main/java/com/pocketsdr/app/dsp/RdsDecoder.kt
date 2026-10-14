@@ -27,14 +27,17 @@ class RdsDecoder(private val fs: Float) {
     private val delayHalf = (fs / 2375f).toInt().coerceAtLeast(2)
     private val delayBuf = FloatArray(delayHalf)
     private var delayPos = 0
+
+    // ===== Gardner TED 位同步（2 倍过采样数字 PI 环，经 DspVerify 调参）=====
     private var clockVco = 0.0
     private val clockVcoInc = 2.0 * Math.PI * 1187.5 / fs
-    private var clockTrim = 0.0
-    private var lastClockSin = 0.0
-    private var prevBase = 0f
+    private var gardnerTrim = 0.0
+    private var lastSymbolPhase = false
+    private var prevSym = 0f
+    private var prevSymForDecision = 0f
+    private var midSample = 0f
 
     // ===== 位/块 =====
-    private var prevHalfLevel = 0f
     private var blockReg = 0L
     private var blockBits = 0
     private var expectBlock = 0
@@ -50,7 +53,7 @@ class RdsDecoder(private val fs: Float) {
     private val psSeen = BooleanArray(4)
 
     fun process(mpx: Float) {
-        // 57k Costas
+        // 57k Costas（极性修正：负反馈，经 DspVerify 验证）
         vcoPhase += vcoInc + loopInteg
         if (vcoPhase > TWO_PI) vcoPhase -= TWO_PI
         val c = cos(vcoPhase).toFloat()
@@ -58,32 +61,29 @@ class RdsDecoder(private val fs: Float) {
         val iBr = mpx * c
         val qBr = mpx * s
         val err = loopLp.process(iBr * qBr)
-        // 极性修正（经 DspVerify 验证）：负反馈
         loopInteg = loopInteg * 0.99999 - err * 2e-6
         val base = dataLp2.process(dataLp.process(iBr))
 
-        // 早晚门位同步：过零时刻把时钟相位拉向最近 π 的倍数
-        clockVco += clockVcoInc * (1.0 + clockTrim)
+        // Gardner 位同步
+        clockVco += clockVcoInc + gardnerTrim
         if (clockVco > TWO_PI) clockVco -= TWO_PI
-        val zeroCross = (base >= 0f) != (prevBase >= 0f)
-        if (zeroCross) {
-            val ph = clockVco % Math.PI
-            val phErr = if (ph > Math.PI / 2) ph - Math.PI else ph
-            clockTrim = (clockTrim * 0.98 - phErr * 2e-4).coerceIn(-0.02, 0.02)
+        val symbolNow = sin(clockVco) >= 0.0
+        if (symbolNow != lastSymbolPhase) {
+            lastSymbolPhase = symbolNow
+            if (symbolNow) {
+                val cur = base
+                // Gardner 误差：(cur − prevSym) × midSample
+                val e = (cur - prevSym) * midSample
+                gardnerTrim = (gardnerTrim * 0.995 - e * 5e-5).coerceIn(-1e-3, 1e-3)
+                prevSym = cur
+                // 差分判决（乘积判据）：反相=1
+                val bit = if (cur * prevSymForDecision < 0f) 1 else 0
+                prevSymForDecision = cur
+                pushBit(bit)
+            } else {
+                midSample = base
+            }
         }
-        prevBase = base
-
-        val curSin = sin(clockVco)
-        if (lastClockSin < 0.0 && curSin >= 0.0) {
-            // 位中点差分判决（乘积判据，经 DspVerify 验证）：反相=1，同相=0
-            val bit = if (base * prevHalfLevel < 0f) 1 else 0
-            prevHalfLevel = base
-            pushBit(bit)
-        }
-        if (lastClockSin >= 0.0 && curSin < 0.0) {
-            prevHalfLevel = base
-        }
-        lastClockSin = curSin
     }
 
     private fun pushBit(bit: Int) {
@@ -103,8 +103,8 @@ class RdsDecoder(private val fs: Float) {
             }
             blockBits = 0
             blockReg = 0
-        } else if (expectBlock != 0 && checkOk(data, check, OFFSETS[0])) {
-            // 序列中途重入 A 块
+        } else if (checkOk(data, check, OFFSETS[0])) {
+            // 任意时刻 A 块出现 → 鲁棒重同步
             expectBlock = 1
             blockData[0] = data
             blockIdx = 1

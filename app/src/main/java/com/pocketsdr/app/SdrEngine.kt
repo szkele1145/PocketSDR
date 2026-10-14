@@ -81,6 +81,8 @@ class SdrEngine private constructor(
     private val audioDecR = RealDecimator(8, 129, 0.049f)       // 256k → 32k R
     private val deempL = Demodulators.DeEmphasis(50f, 32_000f)
     private val deempR = Demodulators.DeEmphasis(50f, 32_000f)
+    /** RDS 解码（WFM 路径 256k 喂入） */
+    val rds = com.pocketsdr.app.dsp.RdsDecoder(256_000f)
     private val nfmDemod = Demodulators.NfmDemod()
     private val amDemod = Demodulators.AmDemod()
     private val nfmAudioLp = Biquad.Lowpass(3400f, 32_000f)
@@ -244,6 +246,7 @@ class SdrEngine private constructor(
             if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
             // 鉴频：输出 1.0 = ±128kHz（满偏 ±75kHz → ×1.7 满幅）
             val mp = wfmDemod.demodulate(d.i, d.q) * WFM_DEV_SCALE
+            rds.process(mp)  // RDS（57k 子载波在 MPX 域）
             // 立体声解码在 256k（38k 子载波需 fs>76k），解码后双路 ÷8 → 32k
             val (l, r) = stereo.decode(mp)
             val la = audioDecL.process(l)

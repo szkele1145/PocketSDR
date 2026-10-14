@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var status by mutableStateOf("初始化…")
     private var signalDb by mutableStateOf(-120f)
     private var stereoLock by mutableStateOf(0f)
+    private var rdsName by mutableStateOf("")
     private var engineReady by mutableStateOf(false)
 
     // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 wfVersion += 1
                 signalDb = engine?.signalDb ?: -120f
                 stereoLock = engine?.stereoLock ?: 0f
+                rdsName = engine?.rds?.stationName ?: ""
             }
         }
     }
@@ -241,6 +243,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 status = status,
                 signalDb = signalDb,
                 stereoLock = stereoLock,
+                rdsName = rdsName,
                 onExit = { finish() }
             )
         } else {

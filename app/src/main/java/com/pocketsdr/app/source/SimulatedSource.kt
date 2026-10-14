@@ -32,6 +32,10 @@ class SimulatedSource(
 
     private val stations = ArrayList<Station>()
 
+    // RDS 波形（96.6 台专用，预生成循环）
+    private var rdsWave: FloatArray? = null
+    private var rdsPos = 0
+
     private var noiseSeed = 0x9E3779B97F4A7C15uL
     private fun nextNoise(): Float {
         noiseSeed = noiseSeed xor (noiseSeed shl 13)
@@ -55,6 +59,12 @@ class SimulatedSource(
         for ((idx, st) in stations.withIndex()) {
             st.audioPhase = idx * 1.7
             st.modPhase = idx * 0.9
+        }
+        // 96.6 台预生成 RDS 波形（"SIM RADIO"）
+        if (rdsWave == null) {
+            rdsWave = try {
+                RdsEncoder("SIM RADIO").buildWave(sampleRate)
+            } catch (_: Exception) { null }
         }
     }
 
@@ -96,6 +106,12 @@ class SimulatedSource(
                         if (abs(st.pilotInteg) > 1e9) st.pilotInteg = 0.0  // 精度保护
                         instPhase = st.carrierPhase + st.modPhase + st.pilotInteg
                         amp = 0.16 * st.level
+                        // 96.6 台叠加 RDS：MPX 域 57k DSB → FM 频偏积分（与导频同法）
+                        if (st.freq == 96_600_000L && rdsWave != null) {
+                            val w = rdsWave!!
+                            st.pilotInteg += w[rdsPos] * st.deviation * twoPiOverFs
+                            rdsPos = (rdsPos + 1) % w.size
+                        }
                     }
                     1 -> { // NFM
                         st.modPhase += audio * st.deviation * twoPiOverFs

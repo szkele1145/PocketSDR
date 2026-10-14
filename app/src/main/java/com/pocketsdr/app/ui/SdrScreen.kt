@@ -44,6 +44,7 @@ fun SdrScreen(
     status: String,
     signalDb: Float,
     stereoLock: Float,
+    rdsName: String,
     onExit: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -251,7 +252,17 @@ fun SdrScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
             ) {
-                Text(status, fontSize = 11.sp, color = Color(0xFF8FA3B8), modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(status, fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    if (mode == SdrEngine.Mode.WFM && rdsName.isNotEmpty()) {
+                        Text(
+                            "RDS: $rdsName",
+                            fontSize = 12.sp,
+                            color = Color(0xFF7DF3FF),
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
                 if (mode == SdrEngine.Mode.WFM && stereoLock > 0.5f) {
                     Text("ST", color = Color(0xFF00E5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }

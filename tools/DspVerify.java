@@ -491,10 +491,12 @@ public class DspVerify {
                 mpx[i] = base[i] * (float) Math.cos(w * i) * 0.15f + rnd.nextFloat() * 0.001f;
             }
             RdsDecoderJ dec = new RdsDecoderJ();
+            dec.debugBlocks = true;
             for (float v : mpx) dec.process(v);
+            dec.debugBlocks = false;
             // 原始诊断：时钟 VCO 是否在转、位计数
-            System.out.printf("  诊断: clockVco=%.3f trim=%.2e 位判决数=%d 块锁定=%d%n",
-                dec.clockVco, dec.clockTrim, dec.bitDecisions, dec.blockLocks);
+            System.out.printf("  诊断: 位判决数=%d 块锁定=%d trim=%.2e%n",
+                dec.bitDecisions, dec.blockLocks, dec.gardnerTrim);
             System.out.println("  级2(全链路): \"" + dec.stationName + "\" lock=" + dec.dataLock);
             check("RDS 全链路解码电台名", "TEST FM".equals(dec.stationName.trim()),
                 "解码=\"" + dec.stationName + "\"");
@@ -513,15 +515,15 @@ public class DspVerify {
         final float[] delayBuf = new float[delayHalf];
         int delayPos = 0;
         final Biquad clockBp = Biquad.bandpass(1187.5f, fs2, 8f);
-        // 早晚门位同步：额定 1187.5Hz 时钟 + 过零时刻微调
-        double clockVco = 0, lastClockSin = 0;
+        // ===== Gardner 位同步 =====
+        double clockVco = 0, gardnerTrim = 0;
         final double clockVcoInc = 2 * Math.PI * 1187.5 / fs2;
-        double clockTrim = 0;  // 每位 ±1% 相位微调累积
-        float prevHalfLevel = 0, prevLevelBeforeCross = 0, prevBase = 0;
-        int crossPair = 0;
+        boolean lastSymbolPhase = false;
+        float prevSym = 0, prevSymForDecision = 0, midSample = 0;
         long blockReg = 0;
         int blockBits = 0, expectBlock = 0, blockIdx = 0;
         int bitDecisions = 0, blockLocks = 0;
+        boolean debugBlocks = false;
         final int[] blockData = new int[4];
         String stationName = "";
         boolean dataLock = false;
@@ -556,31 +558,32 @@ public class DspVerify {
             delayBuf[delayPos] = base;
             delayPos = (delayPos + 1 == delayBuf.length) ? 0 : delayPos + 1;
 
-            // 早晚门同步：位时钟过零检测，基带过零时重置相位
-            clockVco += clockVcoInc * (1.0 + clockTrim);
+            // ===== Gardner TED 位同步（2 倍过采样数字 PI 环）=====
+            // 每位 2 个采样点（符号样本+中间样本），Gardner 误差:
+            // e = (y[n-1符号] − y[n符号]) × y[n-1/2中间]
+            clockVco += clockVcoInc + gardnerTrim;
             if (clockVco > 2 * Math.PI) clockVco -= 2 * Math.PI;
-            // 基带过零 → 若时钟相位偏离 0/π 较远则微调
-            boolean zeroCross = (base >= 0) != (prevBase >= 0);
-            if (zeroCross) {
-                // 把时钟相位拉向最近的多值 (0 或 π)
-                double ph = clockVco % Math.PI;
-                double phErr2 = ph > Math.PI / 2 ? ph - Math.PI : ph;
-                clockTrim = clockTrim * 0.98 + (-phErr2 * 2e-4);
-                if (clockTrim > 0.02) clockTrim = 0.02;
-                if (clockTrim < -0.02) clockTrim = -0.02;
-            }
-            prevBase = base;
-
-            // TODO(下轮): 全链路位同步——过零成对计数判决（每 2 过零=1 位）
-            // 当前保留: 已验证层=块解码/CRC/PS、Costas、理想时钟
-            if (zeroCross) {
-                if (++crossPair == 2) {
-                    crossPair = 0;
-                    int bit = (prevLevelBeforeCross * base) < 0 ? 1 : 0;
+            boolean symbolNow = Math.sin(clockVco) >= 0;  // 半周期交替=符号/中间样本
+            if (symbolNow != lastSymbolPhase) {
+                lastSymbolPhase = symbolNow;
+                if (symbolNow) {
+                    // 符号样本时刻
+                    float cur = base;
+                    // Gardner: (cur − prevSym) × midSign
+                    float e = (cur - prevSym) * midSample;
+                    // PI 环
+                    gardnerTrim = gardnerTrim * 0.995 - e * 5e-5;
+                    if (gardnerTrim > 1e-3) gardnerTrim = 1e-3;
+                    if (gardnerTrim < -1e-3) gardnerTrim = -1e-3;
+                    prevSym = cur;
+                    // 差分判决（乘积判据）：反相=1
+                    int bit = (cur * prevSymForDecision < 0) ? 1 : 0;
+                    prevSymForDecision = cur;
                     bitDecisions++;
                     pushBit(bit);
+                } else {
+                    midSample = base;
                 }
-                prevLevelBeforeCross = base;
             }
         }
 
@@ -593,6 +596,7 @@ public class DspVerify {
             int off = RDS_OFFSETS[expectBlock];
             if (checkOk(data, check, off)) {
                 blockData[blockIdx] = data;
+                if (debugBlocks) System.out.printf("    块[%d] data=0x%04X%n", blockIdx, data);
                 blockIdx++;
                 blockLocks++;
                 expectBlock = (expectBlock + 1) & 3;
@@ -602,10 +606,12 @@ public class DspVerify {
                 }
                 blockBits = 0;
                 blockReg = 0;
-            } else if (expectBlock != 0 && checkOk(data, check, RDS_OFFSETS[0])) {
+            } else if (checkOk(data, check, RDS_OFFSETS[0])) {
+                // 任意时刻 A 块出现 → 鲁棒重同步
                 expectBlock = 1;
                 blockData[0] = data;
                 blockIdx = 1;
+                blockLocks++;
                 blockBits = 0;
                 blockReg = 0;
             } else {
