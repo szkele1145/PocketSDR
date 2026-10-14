@@ -95,6 +95,23 @@ fun SpectrumWaterfall(
             }
         }
 
+        // ---- 频率网格（每 MHz 竖线 + 刻度标签） ----
+        val mhzStepPx = w * 1_000_000f / span
+        if (mhzStepPx > 30f) {  // 太密就不画
+            var mhz = (centerFreq / 1_000_000) - (span / 2_000_000)
+            var gridX = ((mhz + 1) * 1_000_000 - (centerFreq - span / 2)).toFloat() / span * w
+            while (gridX < w) {
+                if (gridX > 0) {
+                    drawLine(Color(0x1AFFFFFF), Offset(gridX, 0f), Offset(gridX, h), strokeWidth = 1f)
+                }
+                mhz++
+                gridX += mhzStepPx
+            }
+        }
+        // 边缘频率标签（Canvas 外用 Text 叠加，这里画端点短线）
+        drawLine(Color(0x33FFFFFF), Offset(0f, 0f), Offset(0f, h), strokeWidth = 1f)
+        drawLine(Color(0x33FFFFFF), Offset(w, 0f), Offset(w, h), strokeWidth = 1f)
+
         // ---- tuned 标记线 ----
         val tunedFrac = ((tunedFreq - centerFreq).toFloat() / span) + 0.5f
         if (tunedFrac in 0f..1f) {

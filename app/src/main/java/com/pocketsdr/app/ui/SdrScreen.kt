@@ -95,24 +95,47 @@ fun SdrScreen(
     ) {
         // ===== 频谱区 =====
         Box(Modifier.fillMaxWidth().weight(0.52f)) {
-            SpectrumWaterfall(
-                spectrum = spectrum,
-                waterfall = waterfall,
-                centerFreq = center,
-                tunedFreq = tuned,
-                span = engine.sampleRate.toLong(),
-                dbMin = -90f, dbMax = 0f,
-                onTune = { f ->
-                    engine.tuneWithinSpan(f)
-                    tuned = engine.tunedFreq
-                },
-                onDragTune = { delta ->
-                    engine.recenter(center - delta)
-                    center = engine.centerFreq
-                    tuned = engine.tunedFreq
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            Column(Modifier.fillMaxSize()) {
+                // 频率刻度行
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xCC101826))
+                        .padding(horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "%.1f".format((center - engine.sampleRate / 2) / 1e6) + "M",
+                        fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        "%.1f".format(center / 1e6) + "M",
+                        fontSize = 9.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        "%.1f".format((center + engine.sampleRate / 2) / 1e6) + "M",
+                        fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+                    )
+                }
+                SpectrumWaterfall(
+                    spectrum = spectrum,
+                    waterfall = waterfall,
+                    centerFreq = center,
+                    tunedFreq = tuned,
+                    span = engine.sampleRate.toLong(),
+                    dbMin = -90f, dbMax = 0f,
+                    onTune = { f ->
+                        engine.tuneWithinSpan(f)
+                        tuned = engine.tunedFreq
+                    },
+                    onDragTune = { delta ->
+                        engine.recenter(center - delta)
+                        center = engine.centerFreq
+                        tuned = engine.tunedFreq
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             // 信号强度徽标
             Surface(
                 color = Color(0xCC101826), shape = RoundedCornerShape(8.dp),
