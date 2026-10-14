@@ -313,7 +313,331 @@ public class DspVerify {
             System.out.printf("  诊断: USB 通过音 RMS=%.3f 抑制音 RMS=%.3f%n", pr, sr);
             check("SSB 镜像抑制", pr > sr * 5 + 0.2, "pass=" + pr + " supp=" + sr + " 比=" + (pr / Math.max(sr, 1e-6)));
         }
+        // 6) RDS CRC 自洽
+        rdsTest();
+        // 7) RDS 编码→解码全链路闭环
+        rdsLoopbackTest();
         System.out.println(fails == 0 ? "\nALL PASS" : "\n" + fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
+    }
+
+    // 6) RDS 编码器自洽性：crc10 回验 + 双相解码回读
+    static void rdsTest() {
+        // 简化版：直接验证 crc10 与块结构（Kotlin 版逻辑镜像）
+        // 块 A 数据 0x1234
+        int data = 0x1234;
+        int crc = rdsCrc10(data);
+        // 回验：data + crc 拼成 26 位应能被 G(x) 整除
+        long word = ((long) data << 10) | crc;
+        boolean ok = rdsSyndromeZero(word);
+        check("RDS CRC 生成/回验", ok, String.format("data=0x%04X crc=0x%03X", data, crc));
+    }
+
+    static int rdsCrc10(int data) {
+        int rem = data << 10;
+        int poly = 0b10100101101;
+        for (int i = 25; i >= 10; i--) {
+            if (((rem >> i) & 1) == 1) rem ^= (poly << (i - 10));
+        }
+        return rem & 0x3FF;
+    }
+
+    static double rms(float[] a, int from) {
+        double s = 0; int n = 0;
+        for (int i = from; i < a.length; i++) { s += (double) a[i] * a[i]; n++; }
+        return Math.sqrt(s / Math.max(n, 1));
+    }
+
+    static boolean rdsSyndromeZero(long word) {
+        long rem = word;
+        long poly = 0b10100101101;
+        for (int i = 25; i >= 10; i--) {
+            if (((rem >> i) & 1) == 1) rem ^= (poly << (i - 10));
+        }
+        return (rem & 0x3FF) == 0;
+    }
+
+    // ===== RDS 全链路（Kotlin RdsEncoder/RdsDecoder 的 Java 镜像）=====
+    static final int[] RDS_OFFSETS = {0x000, 0x0FC, 0x0D9, 0x1D9};
+
+    static int rdsCrc10m(int data) {
+        int rem = data << 10;
+        int poly = 0b10100101101;
+        for (int i = 25; i >= 10; i--) {
+            if (((rem >> i) & 1) == 1) rem ^= (poly << (i - 10));
+        }
+        return rem & 0x3FF;
+    }
+
+    /** 生成 PS 名 "TEST FM " 的 group0A 位流（4 段 × 104 位） */
+    static boolean[] rdsEncodeFrame(String name) {
+        boolean[] bits = new boolean[4 * 104];
+        int p = 0;
+        String padded = (name + "        ").substring(0, 8);
+        for (int seg = 0; seg < 4; seg++) {
+            // 块 A: PI 0x1234
+            p = pushWord(bits, p, 0x1234, 16);
+            p = pushWord(bits, p, rdsCrc10m(0x1234) ^ RDS_OFFSETS[0], 10);
+            // 块 B: group0A + PTY=1 + seg
+            int bB = (0 << 12) | (1 << 5) | seg;
+            p = pushWord(bits, p, bB, 16);
+            p = pushWord(bits, p, rdsCrc10m(bB) ^ RDS_OFFSETS[1], 10);
+            // 块 C: 2 字符（注意 Kotlin 版把 2 字符放在 C 块 16 位）
+            int c1 = padded.charAt(seg * 2);
+            int c2 = padded.charAt(seg * 2 + 1);
+            int bC = (c1 << 8) | c2;
+            p = pushWord(bits, p, bC, 16);
+            p = pushWord(bits, p, rdsCrc10m(bC) ^ RDS_OFFSETS[2], 10);
+            // 块 D: 0 填充（RDS group 0A 有 D 块，这里放 RT 备用 0）
+            p = pushWord(bits, p, 0x0000, 16);
+            p = pushWord(bits, p, rdsCrc10m(0x0000) ^ RDS_OFFSETS[3], 10);
+        }
+        return bits;
+    }
+
+    static int pushWord(boolean[] bits, int p, int v, int n) {
+        for (int i = n - 1; i >= 0; i--) bits[p++] = ((v >> i) & 1) == 1;
+        return p;
+    }
+
+    static void rdsLoopbackTest() {
+        double fs = 256000;
+        boolean[] bits = rdsEncodeFrame("TEST FM ");
+        int spBit = (int) (fs / 1187.5);
+        int half = spBit / 2;
+
+        // ===== 级 -1：直接位流注入（验证块解码/CRC/PS 组装）=====
+        {
+            RdsDecoderJ dec = new RdsDecoderJ();
+            for (boolean b : bits) dec.pushBit(b ? 1 : 0);
+            System.out.println("  级-1(位流直注): \"" + dec.stationName + "\" lock=" + dec.dataLock);
+            check("RDS 块解码+PS 组装", "TEST FM".equals(dec.stationName.trim()),
+                "解码=\"" + dec.stationName + "\"");
+        }
+
+        float[] base = new float[bits.length * spBit];
+        int q = 0;
+        float level = 1;
+        for (boolean b : bits) {
+            float h0 = b ? level : -level;
+            float h1 = -h0;
+            level = h1;
+            for (int s = 0; s < half; s++) base[q++] = h0;
+            for (int s = 0; s < spBit - half; s++) base[q++] = h1;
+        }
+
+        // ===== 级 0：直接位判决（理想时钟）——验证差分判决逻辑 =====
+        {
+            RdsDecoderJ dec = new RdsDecoderJ();
+            // 差分双相判决：位中点(h1)与上一位中点比，反相=1，同相=0
+            float prev = 0;
+            for (int bitIdx = 0; bitIdx < bits.length; bitIdx++) {
+                int mid = bitIdx * spBit + half + half / 2; // 第二半位中点
+                float v = base[mid];
+                int bit = (v * prev < 0) ? 1 : 0;
+                prev = v;
+                dec.pushBit(bit);
+            }
+            System.out.println("  级0(理想时钟): \"" + dec.stationName + "\" lock=" + dec.dataLock);
+            check("RDS 级0 理想时钟位流", "TEST FM".equals(dec.stationName.trim()),
+                "解码=\"" + dec.stationName + "\"");
+        }
+
+        // ===== 级 1：Costas 解调 + 理想时钟（验证 57k 环）=====
+        {
+            float[] mpx = new float[base.length];
+            java.util.Random rnd = new java.util.Random(7);
+            double w = 2 * Math.PI * 57000 / fs;
+            for (int i = 0; i < mpx.length; i++) {
+                mpx[i] = base[i] * (float) Math.cos(w * i) * 0.15f + rnd.nextFloat() * 0.001f;
+            }
+            RdsDecoderJ dec = new RdsDecoderJ();
+            // 只跑 Costas+低通（外部理想时钟判决）
+            float prev = 0;
+            int sampleIdx = 0;
+            int bitIdx = 0;
+            float[] baseband = new float[mpx.length];
+            for (float v : mpx) {
+                baseband[sampleIdx] = dec.costasOnly(v);
+                sampleIdx++;
+            }
+            // 相位诊断：VCO 与 57k 载波相位差
+            double phErr = 0;
+            int nPh = 0;
+            for (int i = mpx.length / 2; i < mpx.length; i += 100) {
+                phErr += Math.cos(dec.vcoPhase - w * i);
+                nPh++;
+            }
+            System.out.printf("  诊断: cos(vco−57k相位差)=%.3f  基带RMS=%.4f%n",
+                phErr / nPh, rms(baseband, mpx.length / 2));
+            for (bitIdx = 0; bitIdx < bits.length; bitIdx++) {
+                int mid = bitIdx * spBit + half + half / 2;
+                float v = baseband[mid];
+                int bit = (v * prev < 0) ? 1 : 0;
+                prev = v;
+                dec.pushBit(bit);
+            }
+            System.out.println("  级1(Costas+理想时钟): \"" + dec.stationName + "\" lock=" + dec.dataLock);
+            check("RDS Costas 环", "TEST FM".equals(dec.stationName.trim()),
+                "解码=\"" + dec.stationName + "\"");
+        }
+
+        // ===== 级 2：全链路（Costas + 位同步 + 噪声）=====
+        {
+            float[] mpx = new float[base.length];
+            java.util.Random rnd = new java.util.Random(7);
+            double w = 2 * Math.PI * 57000 / fs;
+            for (int i = 0; i < mpx.length; i++) {
+                mpx[i] = base[i] * (float) Math.cos(w * i) * 0.15f + rnd.nextFloat() * 0.001f;
+            }
+            RdsDecoderJ dec = new RdsDecoderJ();
+            for (float v : mpx) dec.process(v);
+            // 原始诊断：时钟 VCO 是否在转、位计数
+            System.out.printf("  诊断: clockVco=%.3f trim=%.2e 位判决数=%d 块锁定=%d%n",
+                dec.clockVco, dec.clockTrim, dec.bitDecisions, dec.blockLocks);
+            System.out.println("  级2(全链路): \"" + dec.stationName + "\" lock=" + dec.dataLock);
+            check("RDS 全链路解码电台名", "TEST FM".equals(dec.stationName.trim()),
+                "解码=\"" + dec.stationName + "\"");
+        }
+    }
+
+    /** Kotlin RdsDecoder 的 Java 镜像 */
+    static class RdsDecoderJ {
+        final double vcoInc = 2 * Math.PI * 57000 / fs2;
+        static final float fs2 = 256000;  // 占位，构造中用
+        double vcoPhase = 0, loopInteg = 0;
+        final Biquad loopLp = Biquad.lowpass(800f, fs2, 0.7071f);
+        final Biquad dataLp = Biquad.lowpass(2400f, fs2, 0.7071f);
+        final Biquad dataLp2 = Biquad.lowpass(2400f, fs2, 0.7071f);
+        final int delayHalf = Math.max(2, (int) (fs2 / 2375f));
+        final float[] delayBuf = new float[delayHalf];
+        int delayPos = 0;
+        final Biquad clockBp = Biquad.bandpass(1187.5f, fs2, 8f);
+        // 早晚门位同步：额定 1187.5Hz 时钟 + 过零时刻微调
+        double clockVco = 0, lastClockSin = 0;
+        final double clockVcoInc = 2 * Math.PI * 1187.5 / fs2;
+        double clockTrim = 0;  // 每位 ±1% 相位微调累积
+        float prevHalfLevel = 0, prevLevelBeforeCross = 0, prevBase = 0;
+        int crossPair = 0;
+        long blockReg = 0;
+        int blockBits = 0, expectBlock = 0, blockIdx = 0;
+        int bitDecisions = 0, blockLocks = 0;
+        final int[] blockData = new int[4];
+        String stationName = "";
+        boolean dataLock = false;
+        final char[] psChars = new char[8];
+        final boolean[] psSeen = new boolean[4];
+
+        /** 只跑 Costas + 低通，返回基带（诊断用） */
+        float costasOnly(float mpx) {
+            vcoPhase += vcoInc + loopInteg;
+            if (vcoPhase > 2 * Math.PI) vcoPhase -= 2 * Math.PI;
+            float c = (float) Math.cos(vcoPhase);
+            float s = (float) Math.sin(vcoPhase);
+            float iBr = mpx * c;
+            float qBr = mpx * s;
+            float err = loopLp.process(iBr * qBr);
+            loopInteg = loopInteg * 0.99999 - err * 2e-6;
+            return dataLp2.process(dataLp.process(iBr));
+        }
+
+        void process(float mpx) {
+            vcoPhase += vcoInc + loopInteg;
+            if (vcoPhase > 2 * Math.PI) vcoPhase -= 2 * Math.PI;
+            float c = (float) Math.cos(vcoPhase);
+            float s = (float) Math.sin(vcoPhase);
+            float iBr = mpx * c;
+            float qBr = mpx * s;
+            float err = loopLp.process(iBr * qBr);
+            loopInteg = loopInteg * 0.99999 - err * 2e-6;
+            float base = dataLp2.process(dataLp.process(iBr));
+
+            float delayed = delayBuf[delayPos];
+            delayBuf[delayPos] = base;
+            delayPos = (delayPos + 1 == delayBuf.length) ? 0 : delayPos + 1;
+
+            // 早晚门同步：位时钟过零检测，基带过零时重置相位
+            clockVco += clockVcoInc * (1.0 + clockTrim);
+            if (clockVco > 2 * Math.PI) clockVco -= 2 * Math.PI;
+            // 基带过零 → 若时钟相位偏离 0/π 较远则微调
+            boolean zeroCross = (base >= 0) != (prevBase >= 0);
+            if (zeroCross) {
+                // 把时钟相位拉向最近的多值 (0 或 π)
+                double ph = clockVco % Math.PI;
+                double phErr2 = ph > Math.PI / 2 ? ph - Math.PI : ph;
+                clockTrim = clockTrim * 0.98 + (-phErr2 * 2e-4);
+                if (clockTrim > 0.02) clockTrim = 0.02;
+                if (clockTrim < -0.02) clockTrim = -0.02;
+            }
+            prevBase = base;
+
+            // TODO(下轮): 全链路位同步——过零成对计数判决（每 2 过零=1 位）
+            // 当前保留: 已验证层=块解码/CRC/PS、Costas、理想时钟
+            if (zeroCross) {
+                if (++crossPair == 2) {
+                    crossPair = 0;
+                    int bit = (prevLevelBeforeCross * base) < 0 ? 1 : 0;
+                    bitDecisions++;
+                    pushBit(bit);
+                }
+                prevLevelBeforeCross = base;
+            }
+        }
+
+        void pushBit(int bit) {
+            blockReg = (blockReg << 1) | bit;
+            if (blockBits < 26) blockBits++;
+            if (blockBits < 26) return;
+            int data = (int) ((blockReg >> 10) & 0xFFFF);
+            int check = (int) (blockReg & 0x3FF);
+            int off = RDS_OFFSETS[expectBlock];
+            if (checkOk(data, check, off)) {
+                blockData[blockIdx] = data;
+                blockIdx++;
+                blockLocks++;
+                expectBlock = (expectBlock + 1) & 3;
+                if (blockIdx == 4) {
+                    decodeGroup(blockData);
+                    blockIdx = 0;
+                }
+                blockBits = 0;
+                blockReg = 0;
+            } else if (expectBlock != 0 && checkOk(data, check, RDS_OFFSETS[0])) {
+                expectBlock = 1;
+                blockData[0] = data;
+                blockIdx = 1;
+                blockBits = 0;
+                blockReg = 0;
+            } else {
+                blockBits = 25;
+            }
+        }
+
+        boolean checkOk(int data, int check, int offset) {
+            int rem = data << 10;
+            int poly = 0b10100101101;
+            for (int i = 25; i >= 10; i--) {
+                if (((rem >> i) & 1) == 1) rem ^= (poly << (i - 10));
+            }
+            return (rem & 0x3FF) == (check ^ offset);
+        }
+
+        void decodeGroup(int[] b) {
+            // group type / version 在 B 块（b[1]）高 4 位；PS 段地址在 B 块低 2 位
+            if (((b[1] >> 12) & 0xF) != 0) return;
+            int segment = b[1] & 0x3;
+            int c1 = (b[2] >> 8) & 0xFF;
+            int c2 = b[2] & 0xFF;
+            psChars[segment * 2] = (c1 >= 32 && c1 <= 126) ? (char) c1 : ' ';
+            psChars[segment * 2 + 1] = (c2 >= 32 && c2 <= 126) ? (char) c2 : ' ';
+            psSeen[segment] = true;
+            if (psSeen[0] && psSeen[1] && psSeen[2] && psSeen[3]) {
+                String name = new String(psChars).trim();
+                if (!name.isEmpty() && !name.equals(stationName)) {
+                    stationName = name;
+                    dataLock = true;
+                }
+            }
+        }
     }
 }

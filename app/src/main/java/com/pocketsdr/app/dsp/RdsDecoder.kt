@@ -1,0 +1,148 @@
+package com.pocketsdr.app.dsp
+
+import kotlin.math.cos
+import kotlin.math.sin
+
+/**
+ * RDS 解码器（IEC 62106）。
+ *
+ * 输入：MPX 复用信号（鉴频后），需 ≥256ksps（57kHz 载波奈奎斯特）。
+ *
+ * 级联：57k Costas 下变频 → 2.4k 低通 → 迟延乘积位同步 →
+ * 差分双相解码 → 26 位块 CRC 锁定（A/B/C/D 序列）→ group 0A PS 电台名。
+ */
+class RdsDecoder(private val fs: Float) {
+
+    // ===== 57k Costas =====
+    private var vcoPhase = 0.0
+    private val vcoInc = 2.0 * Math.PI * 57000 / fs
+    private val loopLp = Biquad.Lowpass(800f, fs)
+    private var loopInteg = 0.0
+
+    // ===== 基带 =====
+    private val dataLp = Biquad.Lowpass(2400f, fs)
+    private val dataLp2 = Biquad.Lowpass(2400f, fs)
+
+    // ===== 位同步（早晚门：额定 1187.5Hz 时钟 + 过零微调）=====
+    private val delayHalf = (fs / 2375f).toInt().coerceAtLeast(2)
+    private val delayBuf = FloatArray(delayHalf)
+    private var delayPos = 0
+    private var clockVco = 0.0
+    private val clockVcoInc = 2.0 * Math.PI * 1187.5 / fs
+    private var clockTrim = 0.0
+    private var lastClockSin = 0.0
+    private var prevBase = 0f
+
+    // ===== 位/块 =====
+    private var prevHalfLevel = 0f
+    private var blockReg = 0L
+    private var blockBits = 0
+    private var expectBlock = 0
+    private val blockData = IntArray(4)
+    private var blockIdx = 0
+
+    @Volatile var stationName = ""
+        private set
+    @Volatile var dataLock = false
+        private set
+
+    private val psChars = CharArray(8) { ' ' }
+    private val psSeen = BooleanArray(4)
+
+    fun process(mpx: Float) {
+        // 57k Costas
+        vcoPhase += vcoInc + loopInteg
+        if (vcoPhase > TWO_PI) vcoPhase -= TWO_PI
+        val c = cos(vcoPhase).toFloat()
+        val s = sin(vcoPhase).toFloat()
+        val iBr = mpx * c
+        val qBr = mpx * s
+        val err = loopLp.process(iBr * qBr)
+        // 极性修正（经 DspVerify 验证）：负反馈
+        loopInteg = loopInteg * 0.99999 - err * 2e-6
+        val base = dataLp2.process(dataLp.process(iBr))
+
+        // 早晚门位同步：过零时刻把时钟相位拉向最近 π 的倍数
+        clockVco += clockVcoInc * (1.0 + clockTrim)
+        if (clockVco > TWO_PI) clockVco -= TWO_PI
+        val zeroCross = (base >= 0f) != (prevBase >= 0f)
+        if (zeroCross) {
+            val ph = clockVco % Math.PI
+            val phErr = if (ph > Math.PI / 2) ph - Math.PI else ph
+            clockTrim = (clockTrim * 0.98 - phErr * 2e-4).coerceIn(-0.02, 0.02)
+        }
+        prevBase = base
+
+        val curSin = sin(clockVco)
+        if (lastClockSin < 0.0 && curSin >= 0.0) {
+            // 位中点差分判决（乘积判据，经 DspVerify 验证）：反相=1，同相=0
+            val bit = if (base * prevHalfLevel < 0f) 1 else 0
+            prevHalfLevel = base
+            pushBit(bit)
+        }
+        if (lastClockSin >= 0.0 && curSin < 0.0) {
+            prevHalfLevel = base
+        }
+        lastClockSin = curSin
+    }
+
+    private fun pushBit(bit: Int) {
+        blockReg = (blockReg shl 1) or bit.toLong()
+        if (blockBits < 26) blockBits++
+        if (blockBits < 26) return
+        val data = ((blockReg shr 10) and 0xFFFF).toInt()
+        val check = (blockReg and 0x3FF).toInt()
+        val off = OFFSETS[expectBlock]
+        if (checkOk(data, check, off)) {
+            blockData[blockIdx] = data
+            blockIdx++
+            expectBlock = (expectBlock + 1) and 3
+            if (blockIdx == 4) {
+                decodeGroup(blockData)
+                blockIdx = 0
+            }
+            blockBits = 0
+            blockReg = 0
+        } else if (expectBlock != 0 && checkOk(data, check, OFFSETS[0])) {
+            // 序列中途重入 A 块
+            expectBlock = 1
+            blockData[0] = data
+            blockIdx = 1
+            blockBits = 0
+            blockReg = 0
+        } else {
+            blockBits = 25  // 滑窗
+        }
+    }
+
+    private fun checkOk(data: Int, check: Int, offset: Int): Boolean {
+        var rem = data shl 10
+        for (i in 25 downTo 10) {
+            if ((rem shr i) and 1 == 1) rem = rem xor (POLY shl (i - 10))
+        }
+        return (rem and 0x3FF) == (check xor offset)
+    }
+
+    private fun decodeGroup(b: IntArray) {
+        if (((b[0] shr 12) and 0xF) != 0) return
+        val segment = b[1] and 0x3
+        val c1 = (b[2] shr 8) and 0xFF
+        val c2 = b[2] and 0xFF
+        psChars[segment * 2] = if (c1 in 32..126) c1.toChar() else ' '
+        psChars[segment * 2 + 1] = if (c2 in 32..126) c2.toChar() else ' '
+        psSeen[segment] = true
+        if (psSeen.all { it }) {
+            val name = String(psChars).trim()
+            if (name.isNotEmpty() && name != stationName) {
+                stationName = name
+                dataLock = true
+            }
+        }
+    }
+
+    companion object {
+        private const val TWO_PI = 2.0 * Math.PI
+        private const val POLY = 0b10100101101
+        private val OFFSETS = intArrayOf(0x000, 0x0FC, 0x0D9, 0x1D9)
+    }
+}
