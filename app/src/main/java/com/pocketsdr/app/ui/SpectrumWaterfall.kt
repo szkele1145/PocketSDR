@@ -91,11 +91,22 @@ fun SpectrumWaterfall(
 
         drawRect(Color(0xFF0B0E14))
 
-        // ---- 瀑布（底部 60%，一次贴图） ----
-        drawImage(image, dstSize = androidx.compose.ui.unit.IntSize(w.toInt(), (h - specH).toInt()),
-            srcOffset = androidx.compose.ui.unit.IntOffset.Zero,
-            dstOffset = androidx.compose.ui.unit.IntOffset(0, specH.toInt()),
-            srcSize = androidx.compose.ui.unit.IntSize(image.width, image.height))
+        // ---- 瀑布（底部 60%，按 span 视角裁剪源 Bitmap 横向区间） ----
+        if (span < fullSpan) {
+            val fracL = ((centerFreq - span / 2) - (centerFreq - fullSpan / 2)).toFloat() / fullSpan
+            val sx = (fracL * image.width).toInt().coerceIn(0, image.width - 1)
+            val sw = (span.toFloat() / fullSpan * image.width).toInt().coerceAtLeast(1)
+            drawImage(image,
+                srcOffset = androidx.compose.ui.unit.IntOffset(sx, 0),
+                srcSize = androidx.compose.ui.unit.IntSize(sw.coerceAtMost(image.width - sx), image.height),
+                dstOffset = androidx.compose.ui.unit.IntOffset(0, specH.toInt()),
+                dstSize = androidx.compose.ui.unit.IntSize(w.toInt(), (h - specH).toInt()))
+        } else {
+            drawImage(image, dstSize = androidx.compose.ui.unit.IntSize(w.toInt(), (h - specH).toInt()),
+                srcOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                dstOffset = androidx.compose.ui.unit.IntOffset(0, specH.toInt()),
+                srcSize = androidx.compose.ui.unit.IntSize(image.width, image.height))
+        }
 
         // ---- 谱线（上 40%，按显示 span 视角取 bin 子集） ----
         if (spectrum.isNotEmpty()) {
