@@ -56,6 +56,9 @@ class SimulatedSource(
         add(118_950_000, 2, 0.7f, 0f); add(121_500_000, 2, 0.8f, 0f); add(126_900_000, 2, 0.6f, 0f)
         // 业余 2m NFM
         add(145_500_000, 1, 0.5f, 5_000f); add(146_520_000, 1, 0.45f, 5_000f)
+        // 短波 SSB 测试台（HF 直采/SSB 模式验证）：40m 语音 LSB + 20m USB
+        add(7_074_000, 3, 0.85f, 0f); add(7_200_000, 3, 0.7f, 0f)
+        add(14_300_000, 4, 0.8f, 0f)
         for ((idx, st) in stations.withIndex()) {
             st.audioPhase = idx * 1.7
             st.modPhase = idx * 0.9
@@ -117,6 +120,20 @@ class SimulatedSource(
                         st.modPhase += audio * st.deviation * twoPiOverFs
                         instPhase = st.carrierPhase + st.modPhase
                         amp = 0.12 * st.level
+                    }
+                    3, 4 -> { // SSB：解析信号直接合成（e^{j(ωc±ωa)t} = 单边带复信号）
+                        // LSB: ωc−ωa；USB: ωc+ωa。相位积分生成解析信号，无镜像
+                        val side = if (st.type == 3) -1.0 else 1.0
+                        st.modPhase += side * st.audioRate * (if (st.type == 3) 19.0 else 23.0)
+                        // audio 幅度调制包络（模拟语音起伏）
+                        val env = 0.5 + 0.5 * sin(st.audioPhase * 0.7)
+                        instPhase = st.carrierPhase + side * st.modPhase
+                        amp = 0.0  // 不走通用 cos/sin 路径（下方直接加复信号）
+                        val c = cos(instPhase) * 0.13 * st.level * env
+                        val s = sin(instPhase) * 0.13 * st.level * env
+                        // SSB 解析信号：I=c, Q=s（LSB/USB 由相位方向天然区分）
+                        accI += c
+                        accQ += s
                     }
                     else -> { // AM
                         instPhase = st.carrierPhase

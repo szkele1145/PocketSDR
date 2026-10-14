@@ -288,7 +288,9 @@ fun SdrScreen(
                     Triple("航空", 121_500_000L, SdrEngine.Mode.AM),
                     Triple("2m", 145_500_000L, SdrEngine.Mode.NFM),
                     Triple("NOAA", 137_100_000L, SdrEngine.Mode.NFM),
-                    Triple("70cm", 435_000_000L, SdrEngine.Mode.NFM)
+                    Triple("70cm", 435_000_000L, SdrEngine.Mode.NFM),
+                    Triple("40m", 7_074_000L, SdrEngine.Mode.LSB),
+                    Triple("20m", 14_300_000L, SdrEngine.Mode.USB)
                 )
                 androidx.compose.foundation.layout.Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
