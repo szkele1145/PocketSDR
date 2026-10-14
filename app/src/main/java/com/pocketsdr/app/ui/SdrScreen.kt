@@ -232,17 +232,30 @@ fun SdrScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // 波段带默认模式（点击后自动切模式）
                 val bands = listOf(
-                    "FM 广播" to 98_000_000L,
-                    "航空" to 121_500_000L,
-                    "2m" to 145_500_000L
+                    Triple("FM", 98_000_000L, SdrEngine.Mode.WFM),
+                    Triple("航空", 121_500_000L, SdrEngine.Mode.AM),
+                    Triple("2m", 145_500_000L, SdrEngine.Mode.NFM),
+                    Triple("NOAA", 137_100_000L, SdrEngine.Mode.NFM),
+                    Triple("70cm", 435_000_000L, SdrEngine.Mode.NFM)
                 )
-                bands.forEach { (name, f) ->
-                    OutlinedButton(
-                        onClick = { engine.tuneTo(f); tuned = engine.tunedFreq; center = engine.centerFreq },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
-                    ) { Text(name, fontSize = 12.sp) }
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())
+                ) {
+                    bands.forEach { (name, f, m) ->
+                        OutlinedButton(
+                            onClick = {
+                                engine.selectMode(m)
+                                mode = m
+                                engine.tuneTo(f)
+                                tuned = engine.tunedFreq
+                                center = engine.centerFreq
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))
+                        ) { Text(name, fontSize = 12.sp) }
+                    }
                 }
                 IconButton(onClick = {
                     if (recording) {
