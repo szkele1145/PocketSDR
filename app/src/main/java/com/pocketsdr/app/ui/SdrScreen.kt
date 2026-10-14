@@ -66,6 +66,8 @@ fun SdrScreen(
     var showScan by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
+    var recStartMs by remember { mutableStateOf(0L) }
+    var recTick by remember { mutableStateOf(0) }
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
@@ -89,6 +91,14 @@ fun SdrScreen(
             if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
             else context.startService(intent)
         } catch (_: Exception) {}
+    }
+
+    // 录音中：每 500ms 触发重组刷新时长显示
+    LaunchedEffect(recording) {
+        while (recording) {
+            kotlinx.coroutines.delay(500)
+            recTick++
+        }
     }
 
     Column(
@@ -303,6 +313,7 @@ fun SdrScreen(
                         recording = false
                     } else {
                         recording = engine.startRecording(context)
+                        if (recording) recStartMs = System.currentTimeMillis()
                     }
                 }, modifier = Modifier.size(36.dp).pointerInput(Unit) {
                     detectTapGestures(onLongPress = { showRecordings = true })
@@ -311,6 +322,16 @@ fun SdrScreen(
                         if (recording) Icons.Filled.StopCircle else Icons.Filled.RadioButtonUnchecked,
                         "录音",
                         tint = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)
+                    )
+                }
+                // 录制中：实时时长徽标（与 LaunchedEffect 同步循环）
+                if (recording) {
+                    recTick += 1
+                    @Suppress("UNUSED_EXPRESSION") recTick
+                    val sec = (System.currentTimeMillis() - recStartMs) / 1000
+                    Text(
+                        "%d:%02d".format(sec / 60, sec % 60),
+                        fontSize = 10.sp, color = Color(0xFFFF4040), fontFamily = FontFamily.Monospace
                     )
                 }
                 IconButton(onClick = { showFavorites = true }, modifier = Modifier.size(36.dp)) {
