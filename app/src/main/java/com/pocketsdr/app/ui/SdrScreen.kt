@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -68,6 +69,8 @@ fun SdrScreen(
     var showRecordings by remember { mutableStateOf(false) }
     var recStartMs by remember { mutableStateOf(0L) }
     var recTick by remember { mutableStateOf(0) }
+    var renameTarget by remember { mutableStateOf<com.pocketsdr.app.FreqStore.Ch?>(null) }
+    var renameText by remember { mutableStateOf("") }
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
@@ -563,6 +566,13 @@ fun SdrScreen(
                             }
                             androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                             androidx.compose.material3.IconButton(onClick = {
+                                renameTarget = ch
+                                renameText = ch.name
+                            }) {
+                                Icon(Icons.Filled.Edit, "改名", tint = Color(0xFF5A6B7F),
+                                    modifier = Modifier.size(18.dp))
+                            }
+                            androidx.compose.material3.IconButton(onClick = {
                                 store.removeFavorite(ch.freq)
                                 favorites = store.getFavorites()
                             }) {
@@ -583,6 +593,34 @@ fun SdrScreen(
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showFavorites = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // ---- 收藏改名对话框 ----
+    renameTarget?.let { target ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名收藏") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text(formatFreq(target.freq)) }
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    if (renameText.isNotBlank()) {
+                        store.renameFavorite(target.freq, renameText.trim())
+                        favorites = store.getFavorites()
+                    }
+                    renameTarget = null
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { renameTarget = null }) { Text("取消") }
             }
         )
     }

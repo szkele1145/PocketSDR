@@ -65,6 +65,16 @@ class FreqStore(private val context: Context) {
         saveFavorites(l)
     }
 
+    /** 重命名收藏 */
+    fun renameFavorite(freq: Long, newName: String) {
+        val l = getFavorites()
+        val idx = l.indexOfFirst { it.freq == freq }
+        if (idx >= 0) {
+            l[idx] = l[idx].copy(name = newName.take(20))
+            saveFavorites(l)
+        }
+    }
+
     /** 频道条目 */
     data class Ch(val name: String, val freq: Long, val mode: Int)
 
