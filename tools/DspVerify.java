@@ -388,12 +388,12 @@ public class DspVerify {
         for (int i = 0; i < rdsWaveArr.length; i++) {
             rdsWaveArr[i] = (float) (rdsWaveArr[i] * Math.cos(wRds * i) * 0.075 * 2);
         }
-        // MPX：音频 + 导频 + RDS 循环
-        int total = rdsWaveArr.length * 2;
+        // MPX：音频 + 导频 + RDS 循环（8 倍时长给同步环充分锁定时间）
+        int total = rdsWaveArr.length * 8;
         float[] mpx = new float[total];
         for (int i = 0; i < total; i++) {
             double t = i / fs;
-            float audio = (float) (0.1 * Math.sin(2 * Math.PI * 400 * t));
+            float audio = (float) (0.1 * Math.sin(2 * Math.PI * 5000 * t));  // 5k: 57k 混频后在数据带外
             float pilot = (float) (0.1 * Math.cos(2 * Math.PI * 19000 * t));
             float rdsMpx = rdsWaveArr[i % rdsWaveArr.length];
             mpx[i] = audio + pilot + rdsMpx;
@@ -594,8 +594,24 @@ public class DspVerify {
             }
             RdsDecoderJ dec = new RdsDecoderJ();
             dec.debugBlocks = true;
+            dec.eyeDiagnostics = true;
             for (float v : mpx) dec.process(v);
             dec.debugBlocks = false;
+            dec.eyeDiagnostics = false;
+            // 眼图输出：正/负簇的均值与离散度
+            {
+                double pSum = 0; int pN = 0, nSum2 = 0, nN = 0;
+                for (int i = 0; i < Math.min(dec.eyeCount, dec.eyeSamples.length); i++) {
+                    float v = dec.eyeSamples[i];
+                    if (v > 0) { pSum += v; pN++; }
+                    else { nSum2 += v; nN++; }
+                }
+                if (pN > 10 && nN > 10) {
+                    double pm = pSum / pN, nm = nSum2 / nN;
+                    System.out.printf("  眼图: 正簇均值=%.3f 负簇均值=%.3f 张开度=%.3f%n",
+                        pm, nm, pm - nm);
+                }
+            }
             // 原始诊断：时钟 VCO 是否在转、位计数
             System.out.printf("  诊断: 位判决数=%d 块锁定=%d trim=%.2e%n",
                 dec.bitDecisions, dec.blockLocks, dec.gardnerTrim);
@@ -627,6 +643,10 @@ public class DspVerify {
         int blockBits = 0, expectBlock = 0, blockIdx = 0;
         int bitDecisions = 0, blockLocks = 0;
         boolean debugBlocks = false;
+        // 眼图诊断
+        boolean eyeDiagnostics = false;
+        final float[] eyeSamples = new float[256];
+        int eyeCount = 0;
         final int[] blockData = new int[4];
         String stationName = "";
         boolean dataLock = false;
@@ -688,6 +708,10 @@ public class DspVerify {
                     int bit = (cur * prevSymForDecision < 0) ? 1 : 0;
                     prevSymForDecision = cur;
                     bitDecisions++;
+                    // 眼图诊断：符号时刻样本值分布（理想 ±0.15 二簇）
+                    if (eyeDiagnostics && bitDecisions < 2000) {
+                        eyeSamples[eyeCount++ % eyeSamples.length] = cur;
+                    }
                     pushBit(bit);
                 } else {
                     midSample = base;
