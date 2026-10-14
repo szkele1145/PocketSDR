@@ -370,24 +370,32 @@ public class DspVerify {
         double fs = 1024000;
         double tuneOffset = 600000;  // 台在中心 +600kHz
         // 生成 RDS + 导频 + 音频的 MPX → FM 调制到 IQ
+        // RDS 基带：与 RdsEncoder.buildWave 严格一致的双相 + 57k DSB
         boolean[] bits = rdsEncodeFrame("TEST FM ");
         int spBit = (int) (fs / 1187.5);
         int half = spBit / 2;
-        // MPX 波形（音频 400Hz + 19k 导频 + RDS 57k DSB）
-        int total = bits.length * spBit * 2;  // 2 帧时长
+        float[] rdsWaveArr = new float[bits.length * spBit];
+        int q2 = 0;
+        float level = 1;
+        for (boolean b : bits) {
+            float h0 = b ? level : -level;
+            float h1 = -h0;
+            level = h1;
+            for (int s = 0; s < half; s++) rdsWaveArr[q2++] = h0;
+            for (int s = 0; s < spBit - half; s++) rdsWaveArr[q2++] = h1;
+        }
+        double wRds = 2 * Math.PI * 57000 / fs;
+        for (int i = 0; i < rdsWaveArr.length; i++) {
+            rdsWaveArr[i] = (float) (rdsWaveArr[i] * Math.cos(wRds * i) * 0.075 * 2);
+        }
+        // MPX：音频 + 导频 + RDS 循环
+        int total = rdsWaveArr.length * 2;
         float[] mpx = new float[total];
-        java.util.Random rnd = new java.util.Random(3);
         for (int i = 0; i < total; i++) {
             double t = i / fs;
             float audio = (float) (0.3 * Math.sin(2 * Math.PI * 400 * t));
             float pilot = (float) (0.1 * Math.cos(2 * Math.PI * 19000 * t));
-            float rdsMpx = 0;
-            int bitIdx = (i / spBit) % bits.length;
-            boolean b = bits[bitIdx];
-            // 双相（近似：直接在位内跳变）
-            int inBit = i % spBit;
-            float lvl = b ? (inBit < half ? 1f : -1f) : (inBit < half ? -1f : 1f);
-            rdsMpx = lvl * (float) Math.cos(2 * Math.PI * 57000 * t) * 0.075f * 2;
+            float rdsMpx = rdsWaveArr[i % rdsWaveArr.length];
             mpx[i] = audio + pilot + rdsMpx;
         }
         // FM 调制：瞬时相位 = 载波偏移 + ∫MPX·dev
