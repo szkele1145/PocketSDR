@@ -422,6 +422,39 @@ fun SdrScreen(
                         )
                     }
                 }
+                // ---- 第二行：offset tuning + RTL AGC（进阶） ----
+                var offTune by remember { mutableStateOf(false) }
+                var rtlAgcOn by remember { mutableStateOf(false) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Switch(
+                        checked = offTune,
+                        onCheckedChange = {
+                            offTune = engine.setHardwareOffsetTuning(it)
+                        },
+                        modifier = Modifier.size(36.dp),
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF7DF3FF)
+                        )
+                    )
+                    Text("偏移调谐", fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    androidx.compose.material3.Switch(
+                        checked = rtlAgcOn,
+                        onCheckedChange = {
+                            rtlAgcOn = it
+                            engine.setHardwareRtlAgc(it)
+                        },
+                        modifier = Modifier.size(36.dp),
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFFF9800)
+                        )
+                    )
+                    Text("RTL AGC", fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "采样率 ${"%.3f".format(engine.sampleRate / 1e6)}M",
+                        fontSize = 10.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
     }
