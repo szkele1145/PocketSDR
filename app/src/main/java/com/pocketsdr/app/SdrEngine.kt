@@ -51,6 +51,14 @@ class SdrEngine private constructor(
 
     val hardwareDirectSampling: Int
         get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.directSampling ?: 0
+
+    /** offset tuning（躲开 DC 的 1/f 噪声），仿真源 no-op */
+    fun setHardwareOffsetTuning(on: Boolean): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
+        val ok = src.setOffsetTuning(on)
+        if (ok) resetDspState()
+        return ok
+    }
     enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------

@@ -126,7 +126,9 @@ class RtlUsbSource(
             } else {
                 val t = tuner ?: return
                 rtl.setI2cRepeater(true)
-                t.setParams(centerFreq)
+                // offset tuning：tuner 调到 f − offs（信号在 IF offs 处，基带由 demod 下变频）
+                val tuneTo = if (offsetTuning) centerFreq - offsFreq else centerFreq
+                t.setParams(tuneTo)
                 rtl.setI2cRepeater(false)
             }
         } catch (_: Exception) {}
@@ -155,6 +157,26 @@ class RtlUsbSource(
     // ---------- 直接采样模式（HF 短波）----------
     @Volatile var directSampling = 0
         private set
+
+    /** offset tuning：tuner 调到 f±offs、IF=offs，躲开 DC 的 1/f 噪声（librtlsdr 同逻辑） */
+    @Volatile private var offsetTuning = false
+    private var offsFreq = 0L
+
+    fun setOffsetTuning(on: Boolean): Boolean {
+        if (closed || directSampling != 0) return false
+        offsetTuning = on
+        offsFreq = if (on) (sampleRate.toLong() / 2) * 170 / 100 else 0L
+        try {
+            rtl.setI2cRepeater(false)
+            rtl.setIfFreq(offsFreq)
+            retune()  // 重新调谐（含 offset 偏移）
+            SdrLog.i("SRC", "offset tuning ${if (on) "on offs=${offsFreq / 1000}kHz" else "off"}")
+            return true
+        } catch (e: Exception) {
+            SdrLog.e("SRC", "offset tuning 失败: ${e.message}")
+            return false
+        }
+    }
 
     /** 开/关直接采样（0=关 1=I-ADC 2=Q-ADC）。开时调谐改走 IF 路径。 */
     fun setDirectSampling(mode: Int): Boolean {
