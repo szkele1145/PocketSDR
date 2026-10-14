@@ -20,13 +20,14 @@ class WavRecorder(private val context: Context) {
 
     private var raf: RandomAccessFile? = null
     private var dataBytes = 0L
-    private val buf = java.io.ByteArrayOutputStream(1 shl 16)
     private var sampleRate = 32_000
+    private val buf = java.io.ByteArrayOutputStream(1 shl 16)
+    private val ioLock = Any()   // DSP 写 与 UI 停止/启动 的互斥
 
     /** 开始录音（新建带时间戳的文件） */
-    fun start(sr: Int, freqHz: Long): Boolean {
+    fun start(sr: Int, freqHz: Long): Boolean = synchronized(ioLock) {
         if (recording) return true
-        return try {
+        try {
             sampleRate = sr
             val dir = File(context.getExternalFilesDir(null), "recordings")
             dir.mkdirs()
@@ -43,20 +44,25 @@ class WavRecorder(private val context: Context) {
             true
         } catch (e: Exception) { false }
     }
-
     /** DSP 线程调用：追加一帧立体声 16bit */
     fun write(frame: ShortArray, count: Int) {
         if (!recording) return
-        // byte 序：little-endian
+        val chunk = ByteArray(count * 2)
         for (k in 0 until count) {
             val v = frame[k]
-            buf.write(v.toInt() and 0xFF)
-            buf.write((v.toInt() shr 8) and 0xFF)
+            chunk[k * 2] = (v.toInt() and 0xFF).toByte()
+            chunk[k * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
         }
-        if (buf.size() >= 1 shl 16) flush()
+        synchronized(ioLock) {
+            if (!recording) return
+            buf.write(chunk)
+            if (buf.size() >= 1 shl 16) flushLocked()
+        }
     }
 
-    private fun flush() {
+    private fun flush() = synchronized(ioLock) { flushLocked() }
+
+    private fun flushLocked() {
         val r = raf ?: return
         val data = buf.toByteArray()
         if (data.isEmpty()) return
@@ -67,19 +73,21 @@ class WavRecorder(private val context: Context) {
 
     /** 停止并回填 WAV 头 */
     fun stop(): String? {
-        if (!recording) return null
-        recording = false
-        flush()
-        val r = raf ?: return filePath
-        try {
-            // 回填 RIFF 头
-            r.seek(0)
-            val header = makeHeader(dataBytes, sampleRate)
-            r.write(header)
-        } catch (_: Exception) {}
-        try { r.close() } catch (_: Exception) {}
-        raf = null
-        return filePath
+        synchronized(ioLock) {
+            if (!recording) return null
+            recording = false
+            flushLocked()
+            val r = raf ?: return filePath
+            try {
+                // 回填 RIFF 头
+                r.seek(0)
+                val header = makeHeader(dataBytes, sampleRate)
+                r.write(header)
+            } catch (_: Exception) {}
+            try { r.close() } catch (_: Exception) {}
+            raf = null
+            return filePath
+        }
     }
 
     companion object {
