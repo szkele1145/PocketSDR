@@ -184,28 +184,55 @@ class SdrEngine private constructor(
 
     /** 调谐到绝对频率 [freqHz]；偏离当前中心超过 span/3 时自动重定源中心 */
     fun tuneTo(freqHz: Long) {
-        _tunedFreq = freqHz
         val span = source.sampleRate
         if (abs(freqHz - _centerFreq) > span / 3) {
-            _centerFreq = freqHz
-            source.centerFreq = freqHz
+            submitTune(freqHz, freqHz)
+        } else {
+            submitTune(_centerFreq, freqHz)
         }
-        resetDspState()
     }
 
     /** 直接调中心（频谱拖动用），tuned 跟随平移保持相对偏移 */
     fun recenter(f: Long) {
-        val delta = f - _centerFreq
-        _centerFreq = f
-        _tunedFreq += delta
-        source.centerFreq = f
-        resetDspState()
+        submitTune(f, _tunedFreq + (f - _centerFreq))
     }
 
     /** 只调收听点，不动源中心（频谱内点选） */
     fun tuneWithinSpan(freqHz: Long) {
-        _tunedFreq = freqHz
-        resetDspState()
+        submitTune(_centerFreq, freqHz)
+    }
+
+    // ---------- 调谐请求队列（UI 线程投递 → DSP 块头原子应用） ----------
+    private val tuneLock = Any()
+    private var pendingCenter: Long? = null
+    private var pendingTuned: Long? = null
+
+    private fun submitTune(center: Long, tuned: Long) {
+        synchronized(tuneLock) {
+            pendingCenter = center
+            pendingTuned = tuned
+        }
+    }
+
+    /** DSP 线程每块调用：原子应用组合调谐状态（center+tuned 一致更新） */
+    private fun applyPendingTune() {
+        var c: Long? = null
+        var t: Long? = null
+        synchronized(tuneLock) {
+            if (pendingCenter != null) {
+                c = pendingCenter
+                t = pendingTuned
+                pendingCenter = null
+                pendingTuned = null
+            }
+        }
+        if (c != null && t != null) {
+            _centerFreq = c
+            _tunedFreq = t
+            // 调谐在 DSP 线程做（与 bulk 读天然串行，I2C 写不与读竞争）
+            source.centerFreq = c
+            resetDspState()
+        }
     }
 
     fun selectMode(m: Mode) {
@@ -227,6 +254,7 @@ class SdrEngine private constructor(
     // ---------- DSP 主循环 ----------
     private fun dspLoop() {
         while (running) {
+            applyPendingTune()  // 块头原子应用调谐（center+tuned 一致）
             val got = source.read(iqBuf, BLOCK)
             if (got <= 0) break
             updateSpectrum(got)
