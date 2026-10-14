@@ -157,16 +157,20 @@ class MainActivity : ComponentActivity(), UiBridge {
                 pushStatus("USB 打开失败（设备忙？）")
                 return
             }
-            val oldEngine = engine
+            // 先停旧引擎（释放 AudioTrack/停止推 UiBridge），再起新的——避免双 DSP 线程并发
+            engine?.let { old ->
+                engine = null
+                engineReady = false
+                old.close()
+            }
             val store = com.pocketsdr.app.FreqStore(this)
             val src = RtlUsbSource(conn, device, 1_024_000L)
             engine = SdrEngine.withSource(src, this).also {
-                // RtlUsbSource 构造时已按默认 98M 调谐；先停旧引擎再调新频率
                 it.start()
                 it.tuneTo(tuneHint)
                 restoreCommon(it, store)
+                engineReady = true
             }
-            oldEngine?.close()
             pushStatus("RTL-SDR 已连接 · FC0013")
         } catch (e: Exception) {
             pushStatus("硬件初始化失败: ${e.message?.take(60)}")
@@ -175,10 +179,16 @@ class MainActivity : ComponentActivity(), UiBridge {
     }
 
     private fun switchToSimulated() {
-        val old = engine
-        val cur = old?.tunedFreq ?: 98_100_000
-        engine = SdrEngine.simulated(this, cur - (cur % 100_000)).also { it.start() }
-        old?.close()
+        val cur = engine?.tunedFreq ?: 98_100_000
+        engine?.let { old ->
+            engine = null
+            engineReady = false
+            old.close()
+        }
+        engine = SdrEngine.simulated(this, cur - (cur % 100_000)).also {
+            it.start()
+            engineReady = true
+        }
         pushStatus("仿真模式")
     }
 
