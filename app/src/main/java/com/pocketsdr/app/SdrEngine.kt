@@ -264,9 +264,17 @@ class SdrEngine private constructor(
     }
 
     private fun updateSpectrum(n: Int) {
-        // 用块内第一段 1024 样本做 FFT（16ms 一次，62fps）
-        fft.powerSpectrum(iqBuf, fftPower)
-        val scaleInv = 1f / (fftSize * fftSize / 4f)
+        // 4 段 FFT 平均（起点 0/4096/8192/12288）：噪声底 ±6dB 波动 → ±3dB，弱信号更清晰
+        java.util.Arrays.fill(fftPower, 0f)
+        val avgN = 4
+        val segStart = (n / avgN) - fftSize   // 4096-1024 = 3072 段间距
+        var base = 0
+        for (a in 0 until avgN) {
+            fft.powerSpectrumSeg(iqBuf, base, fftPower)
+            base += segStart
+        }
+        val invAvg = 1f / avgN
+        val scaleInv = invAvg / (fftSize * fftSize / 4f)
         val half = fftSize / 2
         val out = if (specFlip) specB else specA
         val smooth = specSmooth   // 谱线专用平滑缓冲

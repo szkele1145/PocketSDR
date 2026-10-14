@@ -88,4 +88,21 @@ class Fft(private val n: Int) {
         }
         return out
     }
+
+    /**
+     * 段式功率谱：从 [iq] 的偏移 [start] 起取 n 个复样本，累加到 [out]（多段平均用）。
+     * 注意：不覆盖 out，逐 bin 累加。
+     */
+    fun powerSpectrumSeg(iq: FloatArray, start: Int, out: FloatArray) {
+        var k = start * 2
+        for (s in 0 until n) {
+            workRe[s] = iq[k]
+            workIm[s] = iq[k + 1]
+            k += 2
+        }
+        transform(workRe, workIm)
+        for (b in 0 until n) {
+            out[b] += workRe[b] * workRe[b] + workIm[b] * workIm[b]
+        }
+    }
 }
