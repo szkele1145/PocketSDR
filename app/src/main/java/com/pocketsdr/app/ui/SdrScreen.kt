@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +59,7 @@ fun SdrScreen(
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showScan by remember { mutableStateOf(false) }
+    var showLog by remember { mutableStateOf(false) }
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
@@ -247,10 +249,13 @@ fun SdrScreen(
                 Text("${squelch.toInt()}", fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace)
             }
 
-            // ---- 状态行 ----
+            // ---- 状态行（长按弹日志面板）----
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { showLog = true })
+                    }
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(status, fontSize = 11.sp, color = Color(0xFF8FA3B8))
@@ -452,6 +457,46 @@ fun SdrScreen(
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showScan = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // ---- 日志面板对话框 ----
+    if (showLog) {
+        val logLines = remember { com.pocketsdr.app.SdrLog.dump() }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLog = false },
+            title = { Text("运行日志 (${logLines.size})") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .height(320.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            logLines.take(200).forEach {
+                                Text(it, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                                    color = when {
+                                        it.contains("/E/") -> Color(0xFFFF5252)
+                                        it.contains("/W/") -> Color(0xFFF6D55C)
+                                        else -> Color(0xFF8FA3B8)
+                                    })
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val path = com.pocketsdr.app.SdrLog.save(context)
+                    if (path != null) {
+                        android.widget.Toast.makeText(context, "已保存: $path", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("落盘") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showLog = false }) { Text("关闭") }
             }
         )
     }

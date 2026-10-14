@@ -3,6 +3,7 @@ package com.pocketsdr.app.source.rtl
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
+import com.pocketsdr.app.SdrLog
 import com.pocketsdr.app.source.IQSource
 
 /**
@@ -40,6 +41,7 @@ class RtlUsbSource(
     private var closed = false
 
     init {
+        SdrLog.i("USB", "打开设备 vid=${String.format("%04X", device.vendorId)} pid=${String.format("%04X", device.productId)}")
         require(device.interfaceCount > 0) { "USB 接口数 0" }
         val iface = device.getInterface(0)
         var ep: android.hardware.usb.UsbEndpoint? = null
@@ -52,10 +54,13 @@ class RtlUsbSource(
             }
         }
         checkNotNull(ep) { "未找到 bulk-in 端点" }
-        conn.claimInterface(iface, true)
+        val claimOk = conn.claimInterface(iface, true)
+        SdrLog.i("USB", "claim 接口0: $claimOk (false=被内核驱动占用)")
         rtl = Rtl2832(conn, ep)
         check(rtl.initBaseband()) { "RTL2832 基带初始化失败" }
+        SdrLog.i("RTL", "基带初始化 OK")
         tunerType = rtl.probeTuner()
+        SdrLog.i("RTL", "tuner 探测: $tunerType")
         when (tunerType) {
             RtlTuner.FC0013 -> {
                 rtl.setI2cRepeater(true)
@@ -63,18 +68,24 @@ class RtlUsbSource(
                 check(t.init()) { "FC0013 初始化失败" }
                 tuner = t
                 rtl.setI2cRepeater(false)
+                SdrLog.i("FC0013", "初始化 OK")
             }
             RtlTuner.R820T ->
                 throw UnsupportedOperationException("R820T 暂不支持，本版只适配 FC0013")
             RtlTuner.UNKNOWN ->
-                throw UnsupportedOperationException("未识别的 tuner")
+                throw UnsupportedOperationException("未识别的 tuner（探测 FC0013/R820T 均无响应，检查天线/供电/OTG）")
         }
         sampleRate = rtl.setSampleRate(requestedRate).toFloat()
+        SdrLog.i("RTL", "采样率请求 $requestedRate 实际 ${sampleRate.toLong()}")
         rtl.resetBuffer()
         rtl.setI2cRepeater(true)
         check(tuner!!.setParams(centerFreq)) { "FC0013 调谐失败" }
         rtl.setI2cRepeater(false)
+        SdrLog.i("FC0013", "初始调谐 ${centerFreq / 1000} kHz OK")
     }
+
+    // bulk 读失败计数（连续超时诊断）
+    private var readTimeouts = 0
 
     override fun read(out: FloatArray, nSamples: Int): Int {
         if (closed) return -1
@@ -84,8 +95,12 @@ class RtlUsbSource(
                 val n = rtl.bulkRead(usbBuf, usbBufSize, 1000)
                 if (n <= 0) {
                     if (closed) return -1
+                    if (++readTimeouts % 20 == 1) {
+                        SdrLog.w("USB", "bulk 读超时 x${readTimeouts}（OTG 线/供电问题？）")
+                    }
                     continue
                 }
+                readTimeouts = 0
                 usbPos = 0
                 usbLen = n
             }
