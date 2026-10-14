@@ -59,6 +59,12 @@ class SdrEngine private constructor(
         if (ok) resetDspState()
         return ok
     }
+
+    /** RTL2832 内部 AGC 开关（SDR 场景通常关，防它拉平均信号） */
+    fun setHardwareRtlAgc(on: Boolean): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
+        return src.setRtlAgc(on)
+    }
     enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------

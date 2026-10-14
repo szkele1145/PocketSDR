@@ -154,6 +154,14 @@ class RtlUsbSource(
         } catch (_: Exception) {}
     }
 
+    /** RTL2832 内部 AGC 开关 */
+    fun setRtlAgc(on: Boolean): Boolean {
+        if (closed) return false
+        val ok = rtl.setRtlAgc(on)
+        SdrLog.i("RTL", "内部 AGC ${if (on) "on" else "off"}: $ok")
+        return ok
+    }
+
     // ---------- 直接采样模式（HF 短波）----------
     @Volatile var directSampling = 0
         private set

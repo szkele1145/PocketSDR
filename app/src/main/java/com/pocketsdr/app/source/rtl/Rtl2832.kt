@@ -322,6 +322,12 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
         return realRate.toLong()
     }
 
+    /** RTL2832 内部 AGC（testmode/AGC 寄存器页 0）：on=0x25 off=0x05 */
+    fun setRtlAgc(on: Boolean): Boolean {
+        setI2cRepeater(false)
+        return demodWriteReg(0, 0x19, if (on) 0x25 else 0x05, 1)
+    }
+
     /** 复位采样流端点（读流开始前调用） */
     fun resetBuffer() {
         setI2cRepeater(false)
