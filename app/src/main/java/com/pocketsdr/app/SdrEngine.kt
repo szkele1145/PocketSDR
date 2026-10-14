@@ -27,6 +27,19 @@ class SdrEngine private constructor(
     private val source: IQSource,
     private val ui: UiBridge
 ) {
+    /** 供 HardwareControl 等上层访问源（只读） */
+    val sourceOrNull: IQSource get() = source
+    val isRealSource: Boolean get() = source.isReal
+
+    /** 硬件 LNA 增益（tenths dB），仿真源 no-op */
+    fun setHardwareLnaGain(tenthsDb: Int) {
+        (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.setLnaGain(tenthsDb)
+    }
+
+    /** 硬件手动增益模式 */
+    fun setHardwareGainMode(manual: Boolean) {
+        (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.setGainMode(manual)
+    }
     enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------

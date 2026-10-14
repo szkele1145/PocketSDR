@@ -248,6 +248,46 @@ fun SdrScreen(
                     Icon(Icons.Filled.Close, "退出", tint = Color(0xFF5A6B7F))
                 }
             }
+
+            // ---- 硬件增益控制（仅真实硬件显示） ----
+            if (engine.isRealSource) {
+                var manualGain by remember { mutableStateOf(false) }
+                var gainIdx by remember { mutableStateOf(14f) }  // 默认 7.1dB 档
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Switch(
+                        checked = manualGain,
+                        onCheckedChange = {
+                            manualGain = it
+                            engine.setHardwareGainMode(it)
+                        },
+                        modifier = Modifier.size(36.dp),
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00E5FF)
+                        )
+                    )
+                    Text("手动增益", fontSize = 11.sp, color = Color(0xFF8FA3B8))
+                    if (manualGain) {
+                        Slider(
+                            value = gainIdx,
+                            onValueChange = {
+                                gainIdx = it
+                                val gains = com.pocketsdr.app.HardwareControl(engine).lnaGains
+                                engine.setHardwareLnaGain(gains[it.toInt().coerceIn(0, gains.size - 1)])
+                            },
+                            valueRange = 0f..(com.pocketsdr.app.HardwareControl(engine).lnaGains.size - 1).toFloat(),
+                            modifier = Modifier.weight(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color(0xFFF6D55C),
+                                activeTrackColor = Color(0xFFF6D55C)
+                            )
+                        )
+                        Text(
+                            "%.1f dB".format(com.pocketsdr.app.HardwareControl(engine).lnaGains[gainIdx.toInt()] / 10f),
+                            fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
         }
     }
 

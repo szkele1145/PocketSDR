@@ -112,6 +112,26 @@ class RtlUsbSource(
         } catch (_: Exception) {}
     }
 
+    /** 设 LNA 增益（tenths dB，FC0013 内部取最近档） */
+    fun setLnaGain(tenthsDb: Int) {
+        if (closed) return
+        try {
+            rtl.setI2cRepeater(true)
+            tuner?.setLnaGain(tenthsDb)
+            rtl.setI2cRepeater(false)
+        } catch (_: Exception) {}
+    }
+
+    /** 手动增益模式开关（true=手动按 setLnaGain 的值） */
+    fun setGainMode(manual: Boolean) {
+        if (closed) return
+        try {
+            rtl.setI2cRepeater(true)
+            tuner?.setGainMode(manual)
+            rtl.setI2cRepeater(false)
+        } catch (_: Exception) {}
+    }
+
     override fun close() {
         closed = true
         try { rtl.deinit() } catch (_: Exception) {}
