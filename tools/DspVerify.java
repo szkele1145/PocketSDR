@@ -642,10 +642,10 @@ public class DspVerify {
                 }
             }
             // 原始诊断：时钟 VCO 是否在转、位计数
-            System.out.printf("  诊断: 位判决数=%d 块锁定=%d trim=%.2e%n",
-                dec.bitDecisions, dec.blockLocks, dec.gardnerTrim);
+            System.out.printf("  诊断: 位判决数=%d 块锁定=%d%n",
+                dec.bitDecisions, dec.blockLocks);
             System.out.println("  级2(全链路): \"" + dec.stationName + "\" lock=" + dec.dataLock);
-            // 探索中：Gardner 环参数待眼图调优（当前 10 块锁定/415 位，字符部分解出）
+            // 探索中：延迟匹配锁（当前目标 10+ 块锁定，字符部分解出）
             check("RDS 全链路块锁定数", dec.blockLocks >= 8,
                 "块锁定=" + dec.blockLocks + " (>=8 为部分工作，位同步参数待调优)");
         }
@@ -663,12 +663,11 @@ public class DspVerify {
         final float[] delayBuf = new float[delayHalf];
         int delayPos = 0;
         final Biquad clockBp = Biquad.bandpass(1187.5f, fs2, 8f);
-        // ===== Gardner 位同步 =====
+        // ===== Gardner 位同步（验证最优基线）=====
         double clockVco = 0, gardnerTrim = 0;
         final double clockVcoInc = 2 * Math.PI * 1187.5 / fs2;
         boolean lastSymbolPhase = false;
         float prevSym = 0, prevSymForDecision = 0, midSample = 0;
-        int lastBit = 0;
         long blockReg = 0;
         int blockBits = 0, expectBlock = 0, blockIdx = 0;
         int bitDecisions = 0, blockLocks = 0, missStreak = 0;
@@ -716,41 +715,28 @@ public class DspVerify {
             delayBuf[delayPos] = base;
             delayPos = (delayPos + 1 == delayBuf.length) ? 0 : delayPos + 1;
 
-            // ===== Gardner TED 位同步（2 倍过采样数字 PI 环）=====
-            // 每位 2 个采样点（符号样本+中间样本），Gardner 误差:
-            // e = (y[n-1符号] − y[n符号]) × y[n-1/2中间]
+            // ===== Gardner TED 位同步（2 倍过采样数字 PI 环）——已验证最优基线 =====
             clockVco += clockVcoInc + gardnerTrim;
             if (clockVco > 2 * Math.PI) clockVco -= 2 * Math.PI;
-            boolean symbolNow = Math.sin(clockVco) >= 0;  // 半周期交替=符号/中间样本
+            boolean symbolNow = Math.sin(clockVco) >= 0;
             if (symbolNow != lastSymbolPhase) {
                 lastSymbolPhase = symbolNow;
                 if (symbolNow) {
-                    // 符号样本时刻
                     float cur = base;
-                    // Gardner: (cur − prevSym) × midSign
                     float e = (cur - prevSym) * midSample;
-                    // PI 环
                     gardnerTrim = gardnerTrim * 0.995 - e * 5e-5;
                     if (gardnerTrim > 1e-3) gardnerTrim = 1e-3;
                     if (gardnerTrim < -1e-3) gardnerTrim = -1e-3;
                     prevSym = cur;
-                    // 差分判决（乘积判据，级0验证过的）：反相=1
                     int bit = (cur * prevSymForDecision < 0) ? 1 : 0;
                     prevSymForDecision = cur;
                     bitDecisions++;
-                    // 眼图诊断：符号时刻样本值分布（理想 ±0.15 二簇）
                     if (eyeDiagnostics && bitDecisions < 2000) {
                         eyeSamples[eyeCount++ % eyeSamples.length] = cur;
                     }
                     pushBit(bit);
                 } else {
                     midSample = base;
-                }
-                // 块失锁反馈：连续 26 位无 CRC 命中 → 用基带过零重置时钟相位
-                if (missStreak > 26) {
-                    missStreak = 0;
-                    // 过零在位边界：把 clockVco 相位设为 0（sin 过零上沿=判决点在过零后半位）
-                    clockVco = 0;
                 }
             }
         }
