@@ -319,6 +319,8 @@ public class DspVerify {
         rdsLoopbackTest();
         // 8) 完整射频仿真链：FM 已调 IQ → NCO→抽取→鉴频→RDS
         rdsRadioFrequencyTest();
+        // 9) SSB 慢速 AGC：弱/强信号输出归一
+        ssbAgcTest();
         System.out.println(fails == 0 ? "\nALL PASS" : "\n" + fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
     }
@@ -354,6 +356,47 @@ public class DspVerify {
         while (d > Math.PI) d -= 2 * Math.PI;
         while (d < -Math.PI) d += 2 * Math.PI;
         return d;
+    }
+
+    /** AudioAgc 的 Java 镜像：弱/强信号输出峰值应接近 */
+    static class AgcMirror {
+        float gain = 1, peakEnv = 0;
+        final float attackA = (float) Math.exp(-1f / (0.010f * 32000));
+        final float releaseA = (float) Math.exp(-1f / (0.5f * 32000));
+        float step(float x) {
+            float ax = Math.abs(x);
+            peakEnv = ax > peakEnv
+                ? attackA * peakEnv + (1 - attackA) * ax
+                : releaseA * peakEnv + (1 - releaseA) * ax;
+            if (peakEnv > 1e-5f) {
+                float want = 0.3f / peakEnv;
+                want = Math.max(0.05f, Math.min(30f, want));
+                gain += (want - gain) * 0.002f;
+            }
+            return Math.max(-1f, Math.min(1f, x * gain));
+        }
+    }
+
+    static void ssbAgcTest() {
+        AgcMirror agc = new AgcMirror();
+        double weakPeak = 0, strongPeak = 0;
+        // 弱信号 (幅度 0.01) 5 秒
+        for (int i = 0; i < 160000; i++) {
+            float x = (float) (0.01 * Math.sin(2 * Math.PI * 1000 * i / 32000.0));
+            float y = agc.step(x);
+            if (i > 150000) weakPeak = Math.max(weakPeak, Math.abs(y));
+        }
+        // 重置（切换台）
+        agc.gain = 1; agc.peakEnv = 0;
+        // 强信号 (幅度 0.9) 5 秒
+        for (int i = 0; i < 160000; i++) {
+            float x = (float) (0.9 * Math.sin(2 * Math.PI * 1000 * i / 32000.0));
+            float y = agc.step(x);
+            if (i > 150000) strongPeak = Math.max(strongPeak, Math.abs(y));
+        }
+        System.out.printf("  诊断: 弱信号峰值=%.3f 强信号峰值=%.3f%n", weakPeak, strongPeak);
+        check("SSB AGC 动态范围压缩", weakPeak > 0.1 && strongPeak < 0.95 && strongPeak > 0.05,
+            "weak=" + weakPeak + " strong=" + strongPeak);
     }
 
     static boolean rdsSyndromeZero(long word) {

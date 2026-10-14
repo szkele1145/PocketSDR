@@ -103,6 +103,7 @@ class SdrEngine private constructor(
     private val ssbDemod = com.pocketsdr.app.dsp.HilbertFir.Companion.SsbDemod(65)
     private val ssbAudioLp = Biquad.Lowpass(2700f, 32_000f)   // SSB 语音带宽
     private val ssbAudioHpf = Biquad.Highpass(300f, 32_000f)  // 去低频隆隆声
+    private val ssbAgc = com.pocketsdr.app.dsp.AudioAgc(32_000f, targetPeak = 0.3f)
 
     // ---------- 音频 ----------
     private val audioRate = 32_000
@@ -204,6 +205,7 @@ class SdrEngine private constructor(
         wfmDemod.reset(); nfmDemod.reset(); amDemod.reset()
         nfmAudioLp.reset(); amAudioHpf.reset()
         ssbDemod.reset(); ssbAudioLp.reset(); ssbAudioHpf.reset()
+        ssbAgc.reset()
         stereo.reset()
         ncoPhase = 0.0
     }
@@ -347,9 +349,11 @@ class SdrEngine private constructor(
             val d = stageB.process(a.i, a.q) ?: continue
             cnt++
             if (cnt <= S_ENERGY_N) energy += (d.i * d.i + d.q * d.q).toDouble()
-            // 相位法 SSB：I ∓ H(Q)
+            // 相位法 SSB：I ∓ H(Q) → 带通 → 慢速 AGC（弱信号可听、强信号不炸）
             val v0 = ssbDemod.demodulate(d.i, d.q, upper)
-            val v = (ssbAudioHpf.process(ssbAudioLp.process(v0))) * volume * 32767f * 3f
+            val vbp = ssbAudioHpf.process(ssbAudioLp.process(v0))
+            val vagc = ssbAgc.process(vbp)
+            val v = vagc * volume * 32767f
             val cv = v.coerceIn(-32767f, 32767f)
             audioFrames[frames * 2] = cv.toInt().toShort()
             audioFrames[frames * 2 + 1] = cv.toInt().toShort()
