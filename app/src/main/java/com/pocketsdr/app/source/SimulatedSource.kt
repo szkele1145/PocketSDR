@@ -3,18 +3,39 @@ package com.pocketsdr.app.source
 import com.pocketsdr.app.dsp.Fft
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
- * 仿真 SDR 源（实现 IQSource）：生成与 RTL-SDR 相同格式的 float IQ 流。
- * FM 广播段布 WFM 台，航空段布 AM 台，业余 2m 布 NFM 台，加噪声底。
+ * 仿真 SDR 源：生成与 RTL-SDR 相同格式的 IQ 流（float 交织 I,Q）。
+ * FM 广播段布模拟台（含 19kHz 导频），航空段布 AM 台，业余 2m 布 NFM 台，加噪声底。
+ *
+ * 性能：三角函数全部走查表（LUT），手机 CPU 上每秒数千万次 Math.cos 是卡顿主因。
  */
 class SimulatedSource(
     @Volatile override var centerFreq: Long,
     override val sampleRate: Float
 ) : IQSource {
     override val isReal = false
+
+    companion object {
+        /** sin/cos 查表：4096 点/2π，线性插值 */
+        private const val LUT_BITS = 12
+        private const val LUT_SIZE = 1 shl LUT_BITS          // 4096
+        private const val LUT_MASK = LUT_SIZE - 1
+        private const val TWO_PI = 2.0 * PI
+        private val SIN_LUT = DoubleArray(LUT_SIZE + 1).also {
+            for (i in 0..LUT_SIZE) it[i] = kotlin.math.sin(TWO_PI * i / LUT_SIZE)
+        }
+
+        /** 快速 sin：相位无需归一化（内部取模），精度 ~1e-6 足够音频 */
+        fun lutSin(phase: Double): Double {
+            val idx = (phase * (LUT_SIZE / TWO_PI)).toInt()
+            val frac = phase * (LUT_SIZE / TWO_PI) - idx
+            val i0 = idx and LUT_MASK
+            return SIN_LUT[i0] + (SIN_LUT[i0 + 1] - SIN_LUT[i0]) * frac
+        }
+
+        fun lutCos(phase: Double): Double = lutSin(phase + PI / 2)
+    }
 
     private class Station(
         val freq: Long,
@@ -91,10 +112,10 @@ class SimulatedSource(
                 st.audioPhase += st.audioRate
                 if (st.audioPhase > TWO_PI) st.audioPhase -= TWO_PI
                 val audio = when (st.type) {
-                    0 -> sin(st.audioPhase * 3.1) * 0.4 + sin(st.audioPhase * 1.7) * 0.3 +
-                        sin(st.audioPhase * 7.3) * 0.2 + sin(st.audioPhase * 13.7) * 0.1
-                    1 -> sin(st.audioPhase * 2.3) * 0.5 + sin(st.audioPhase * 5.1) * 0.3
-                    else -> sin(st.audioPhase * 2.7) * 0.6 + sin(st.audioPhase * 4.3) * 0.4
+                    0 -> lutSin(st.audioPhase * 3.1) * 0.4 + lutSin(st.audioPhase * 1.7) * 0.3 +
+                        lutSin(st.audioPhase * 7.3) * 0.2 + lutSin(st.audioPhase * 13.7) * 0.1
+                    1 -> lutSin(st.audioPhase * 2.3) * 0.5 + lutSin(st.audioPhase * 5.1) * 0.3
+                    else -> lutSin(st.audioPhase * 2.7) * 0.6 + lutSin(st.audioPhase * 4.3) * 0.4
                 }
                 val instPhase: Double
                 val amp: Double
@@ -105,7 +126,7 @@ class SimulatedSource(
                         // 导频：10% 调制度，独立 19kHz 相位积分
                         st.pilotPhase += 19000.0 * twoPiOverFs
                         if (st.pilotPhase > TWO_PI) st.pilotPhase -= TWO_PI
-                        st.pilotInteg += cos(st.pilotPhase) * 19000.0 * twoPiOverFs * 0.1
+                        st.pilotInteg += lutCos(st.pilotPhase) * 19000.0 * twoPiOverFs * 0.1
                         if (abs(st.pilotInteg) > 1e9) st.pilotInteg = 0.0  // 精度保护
                         instPhase = st.carrierPhase + st.modPhase + st.pilotInteg
                         amp = 0.16 * st.level
@@ -126,22 +147,22 @@ class SimulatedSource(
                         val side = if (st.type == 3) -1.0 else 1.0
                         st.modPhase += side * st.audioRate * (if (st.type == 3) 19.0 else 23.0)
                         // audio 幅度调制包络（模拟语音起伏）
-                        val env = 0.5 + 0.5 * sin(st.audioPhase * 0.7)
+                        val env = 0.5 + 0.5 * lutSin(st.audioPhase * 0.7)
                         instPhase = st.carrierPhase + side * st.modPhase
                         amp = 0.0  // 不走通用 cos/sin 路径（下方直接加复信号）
-                        val c = cos(instPhase) * 0.13 * st.level * env
-                        val s = sin(instPhase) * 0.13 * st.level * env
+                        val c = lutCos(instPhase) * 0.13 * st.level * env
+                        val sv = lutSin(instPhase) * 0.13 * st.level * env
                         // SSB 解析信号：I=c, Q=s（LSB/USB 由相位方向天然区分）
                         accI += c
-                        accQ += s
+                        accQ += sv
                     }
                     else -> { // AM
                         instPhase = st.carrierPhase
                         amp = 0.12 * st.level * (0.55 + 0.45 * audio)
                     }
                 }
-                accI += cos(instPhase) * amp
-                accQ += sin(instPhase) * amp
+                accI += lutCos(instPhase) * amp
+                accQ += lutSin(instPhase) * amp
                 st.carrierPhase += phaseInc
                 if (st.carrierPhase > TWO_PI) st.carrierPhase -= TWO_PI
                 if (st.carrierPhase < 0.0) st.carrierPhase += TWO_PI
@@ -151,6 +172,4 @@ class SimulatedSource(
         }
         return nSamples
     }
-
-    companion object { private const val TWO_PI = 2.0 * PI }
 }

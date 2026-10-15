@@ -71,10 +71,12 @@ fun SdrScreen(
     var recTick by remember { mutableStateOf(0) }
     var renameTarget by remember { mutableStateOf<com.pocketsdr.app.FreqStore.Ch?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var scanProgress by remember { mutableStateOf(-1) }
-    var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     val store = remember { com.pocketsdr.app.FreqStore(context) }
     var favorites by remember { mutableStateOf(store.getFavorites()) }
+    // 新手引导（首次启动）
+    var showOnboarding by remember { mutableStateOf(!store.onboardingDone) }
+    var scanProgress by remember { mutableStateOf(-1) }
+    var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
 
     // 引擎状态变化 → UI 同步
     LaunchedEffect(Unit) {
@@ -325,38 +327,45 @@ fun SdrScreen(
                         ) { Text(name, fontSize = 12.sp) }
                     }
                 }
-                IconButton(onClick = {
-                    if (recording) {
-                        engine.stopRecording()
-                        recording = false
-                    } else {
-                        recording = engine.startRecording(context)
-                        if (recording) recStartMs = System.currentTimeMillis()
-                    }
-                }, modifier = Modifier.size(36.dp).pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { showRecordings = true })
-                }) {
+                // 功能按钮摊开（带文字，一眼看懂）
+                OutlinedButton(
+                    onClick = {
+                        if (recording) {
+                            engine.stopRecording()
+                            recording = false
+                        } else {
+                            recording = engine.startRecording(context)
+                            if (recording) recStartMs = System.currentTimeMillis()
+                        }
+                    },
+                    modifier = Modifier.pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { showRecordings = true })
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)
+                    )
+                ) {
                     Icon(
                         if (recording) Icons.Filled.StopCircle else Icons.Filled.RadioButtonUnchecked,
-                        "录音",
-                        tint = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)
+                        null, modifier = Modifier.size(16.dp)
                     )
-                }
-                // 录制中：实时时长徽标（读 recTick 建立依赖 → LaunchedEffect 自增触发重组）
-                if (recording) {
-                    @Suppress("UNUSED_EXPRESSION") recTick
-                    val sec = (System.currentTimeMillis() - recStartMs) / 1000
                     Text(
-                        "%d:%02d".format(sec / 60, sec % 60),
-                        fontSize = 10.sp, color = Color(0xFFFF4040), fontFamily = FontFamily.Monospace
+                        if (recording) {
+                            @Suppress("UNUSED_EXPRESSION") recTick
+                            val sec = (System.currentTimeMillis() - recStartMs) / 1000
+                            "停止 ${sec / 60}:${"%02d".format(sec % 60)}"
+                        } else "录音",
+                        fontSize = 11.sp
                     )
                 }
-                IconButton(onClick = { showFavorites = true }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Filled.StarBorder, "收藏", tint = Color(0xFFF6D55C))
-                }
-                IconButton(onClick = { showScan = true }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Filled.Search, "搜台", tint = Color(0xFF7DF3FF))
-                }
+                OutlinedButton(
+                    onClick = { showFavorites = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF6D55C))
+                ) { Text("★收藏", fontSize = 11.sp) }
+                OutlinedButton(
+                    onClick = { showScan = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7DF3FF))
+                ) { Text("🔍搜台", fontSize = 11.sp) }
             }
 
             // ---- 音量/静噪 ----
@@ -507,6 +516,30 @@ fun SdrScreen(
                 }
             }
         }
+    }
+
+    // ---- 新手引导（首次启动） ----
+    if (showOnboarding) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {},
+            title = { Text("📻 怎么用") },
+            text = {
+                androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("① 直接听：点下方「FM」按钮 → 点频谱图上的尖峰，就听到那个台了", fontSize = 13.sp)
+                    Text("② 调频率：点大数字输入 MHz，或点 ▲▼ 按钮步进（长按连续跳）", fontSize = 13.sp)
+                    Text("③ 频谱操作：单指左右拖 = 平移 · 双指捏合 = 放大缩小", fontSize = 13.sp)
+                    Text("④ 想找台：点「🔍搜台」自动扫 FM 全波段，结果点一下就能听", fontSize = 13.sp)
+                    Text("⑤ 左右两个滑块：上面音量，下面静噪（往下拖=只收强台）", fontSize = 13.sp)
+                    Text("⑥ 现在是仿真模式（没插硬件也能玩）；RTL-SDR 棒子插上自动变真收音机", fontSize = 13.sp, color = Color(0xFF00E5FF))
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    store.onboardingDone = true
+                    showOnboarding = false
+                }) { Text("知道了，开听！") }
+            }
+        )
     }
 
     // ---- 频率输入对话框 ----

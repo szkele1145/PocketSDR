@@ -27,6 +27,11 @@ class FreqStore(private val context: Context) {
         get() = prefs.getFloat("lastVolume", 0.8f)
         set(v) { prefs.edit().putFloat("lastVolume", v).apply() }
 
+    /** 是否已看过新手引导 */
+    var onboardingDone: Boolean
+        get() = prefs.getBoolean("onboardingDone", false)
+        set(v) { prefs.edit().putBoolean("onboardingDone", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

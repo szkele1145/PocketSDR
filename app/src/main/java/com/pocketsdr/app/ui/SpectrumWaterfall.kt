@@ -109,26 +109,33 @@ fun SpectrumWaterfall(
                 srcSize = androidx.compose.ui.unit.IntSize(image.width, image.height))
         }
 
-        // ---- 谱线（上 40%，按显示 span 视角取 bin 子集） ----
+        // ---- 谱线（上 40%，Path 单次绘制：填充 Path + 描线 Path，替代 2×1024 次 drawLine） ----
         if (spectrum.isNotEmpty()) {
             val n = spectrum.size
             val dbRange = max(dbMax - dbMin, 1f)
-            // 显示 span 占全采样率的比例 → bin 可见子区间
             val fracL = ((centerFreq - span / 2) - (centerFreq - fullSpan / 2)).toFloat() / fullSpan
             val fracR = fracL + span.toFloat() / fullSpan
             val k0 = (fracL * (n - 1)).toInt().coerceIn(0, n - 1)
             val k1 = (fracR * (n - 1)).toInt().coerceIn(k0 + 1, n)
             val visN = k1 - k0
             val stepX = w / max(visN - 1, 1)
-            var prevY = specH * (1f - (spectrum[k0] - dbMin) / dbRange)
-            var prevX = 0f
+            // 描线路径
+            val line = androidx.compose.ui.graphics.Path()
+            // 填充路径（谱线下方整体填充，一次 drawPath 替代 1024 次竖线 drawLine）
+            val fill = androidx.compose.ui.graphics.Path()
+            var first = true
             for (kk in 0 until visN) {
                 val k = k0 + kk
                 val x = kk * stepX
                 val y = specH * (1f - (spectrum[k] - dbMin) / dbRange)
-                drawLine(specFill, Offset(x, y), Offset(x, specH), strokeWidth = stepX + 1f)
-                if (kk > 0) drawLine(specColor, Offset(prevX, prevY), Offset(x, y), strokeWidth = 2f)
-                prevX = x; prevY = y
+                if (first) { line.moveTo(x, y); fill.moveTo(x, specH); fill.lineTo(x, y); first = false }
+                else { line.lineTo(x, y); fill.lineTo(x, y) }
+            }
+            if (!first) {
+                fill.lineTo(w, specH)
+                fill.close()
+                drawPath(fill, specFill)
+                drawPath(line, specColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
             }
         }
 

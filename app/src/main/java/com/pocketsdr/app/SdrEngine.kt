@@ -318,8 +318,8 @@ class SdrEngine private constructor(
             val i = iqBuf[s * 2]
             val q = iqBuf[s * 2 + 1]
             // NCO 混频：乘 e^{-jLOt}（Float 域）
-            val c = cos(ncoPhase).toFloat()
-            val sn = (-sin(ncoPhase)).toFloat()
+            val c = com.pocketsdr.app.dsp.TrigLut.cos(ncoPhase).toFloat()
+            val sn = (-com.pocketsdr.app.dsp.TrigLut.sin(ncoPhase)).toFloat()
             val mixedI = i * c - q * sn
             val mixedQ = i * sn + q * c
             ncoPhase += lo
@@ -359,8 +359,8 @@ class SdrEngine private constructor(
         for (s in 0 until n) {
             val i = iqBuf[s * 2]
             val q = iqBuf[s * 2 + 1]
-            val c = cos(ncoPhase).toFloat()
-            val sn = (-sin(ncoPhase)).toFloat()
+            val c = com.pocketsdr.app.dsp.TrigLut.cos(ncoPhase).toFloat()
+            val sn = (-com.pocketsdr.app.dsp.TrigLut.sin(ncoPhase)).toFloat()
             val mixedI = i * c - q * sn
             val mixedQ = i * sn + q * c
             ncoPhase += lo
@@ -397,8 +397,8 @@ class SdrEngine private constructor(
         for (s in 0 until n) {
             val i = iqBuf[s * 2]
             val q = iqBuf[s * 2 + 1]
-            val c = cos(ncoPhase).toFloat()
-            val sn = (-sin(ncoPhase)).toFloat()
+            val c = com.pocketsdr.app.dsp.TrigLut.cos(ncoPhase).toFloat()
+            val sn = (-com.pocketsdr.app.dsp.TrigLut.sin(ncoPhase)).toFloat()
             val mixedI = i * c - q * sn
             val mixedQ = i * sn + q * c
             ncoPhase += lo
