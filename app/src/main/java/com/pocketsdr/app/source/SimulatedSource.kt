@@ -39,7 +39,7 @@ class SimulatedSource(
 
     private class Station(
         val freq: Long,
-        val type: Int, // 0=WFM 1=NFM 2=AM
+        val type: Int, // 0=WFM 1=NFM 2=AM 3=LSB 4=USB
         val level: Float,
         val deviation: Float,
         val audioRate: Double
@@ -49,6 +49,8 @@ class SimulatedSource(
         var modPhase = 0.0
         var pilotPhase = 0.0   // 19kHz 导频相位（WFM 用）
         var pilotInteg = 0.0   // 导频 FM 相位积分
+        /** 载波相位增量/样本（cache 时预计算，热循环直接读字段） */
+        var phaseInc = 0.0
     }
 
     private val stations = ArrayList<Station>()
@@ -92,23 +94,42 @@ class SimulatedSource(
         }
     }
 
+    // 带内台缓存（centerFreq 变化时重算——把每样本的 fOff/phaseInc 判断提出循环）
+    @Volatile private var cachedCenter = -1L
+    private var inBandStations: List<Station> = emptyList()
+    private var outBandAdvances: List<Pair<Station, Double>> = emptyList()
+
+    private fun rebuildBandCache() {
+        if (cachedCenter == centerFreq) return
+        cachedCenter = centerFreq
+        val halfFs = sampleRate / 2.0
+        val twoPiOverFs = 2.0 * PI / sampleRate
+        val inB = ArrayList<Station>(); val outB = ArrayList<Pair<Station, Double>>()
+        for (st in stations) {
+            val fOff = (st.freq - centerFreq).toDouble()
+            st.phaseInc = fOff * twoPiOverFs
+            if (abs(fOff) > halfFs) outB.add(st to st.phaseInc)
+            else inB.add(st)
+        }
+        inBandStations = inB
+        outBandAdvances = outB
+    }
+
     override fun read(out: FloatArray, nSamples: Int): Int {
         ensureStations()
+        rebuildBandCache()
         val fs = sampleRate
         val twoPiOverFs = 2.0 * PI / fs
-        val halfFs = fs / 2.0
+        // 带外台相位批量推进（每样本仍要推进防回跳，但无需判断分支）
+        val outAdv = outBandAdvances
+        val inBand = inBandStations
         for (s in 0 until nSamples) {
             var accI = nextNoise() * 0.05
             var accQ = nextNoise() * 0.05
-            for (st in stations) {
-                val fOff = (st.freq - centerFreq).toDouble()
-                val phaseInc = fOff * twoPiOverFs
-                if (abs(fOff) > halfFs) { // 带外：只推进相位，不合成
-                    st.carrierPhase += phaseInc
-                    if (st.carrierPhase > TWO_PI) st.carrierPhase -= TWO_PI
-                    if (st.carrierPhase < 0.0) st.carrierPhase += TWO_PI
-                    continue
-                }
+            for (st in outAdv) {
+                st.first.carrierPhase += st.second
+            }
+            for (st in inBand) {
                 st.audioPhase += st.audioRate
                 if (st.audioPhase > TWO_PI) st.audioPhase -= TWO_PI
                 val audio = when (st.type) {
@@ -163,7 +184,7 @@ class SimulatedSource(
                 }
                 accI += lutCos(instPhase) * amp
                 accQ += lutSin(instPhase) * amp
-                st.carrierPhase += phaseInc
+                st.carrierPhase += st.phaseInc
                 if (st.carrierPhase > TWO_PI) st.carrierPhase -= TWO_PI
                 if (st.carrierPhase < 0.0) st.carrierPhase += TWO_PI
             }
