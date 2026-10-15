@@ -167,6 +167,10 @@ class SdrEngine private constructor(
         audioTrack = buildAudioTrack()
         dspThread = Thread({ dspLoop() }, "SdrDsp").apply {
             priority = Thread.MAX_PRIORITY - 1
+            // 再降 nice 值（需要 root/系统 App 才生效，普通 App 静默失败无副作用）
+            try {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            } catch (_: Exception) {}
             start()
         }
         ui.pushStatus(if (source.isReal) "硬件已连接" else "仿真模式")
@@ -463,7 +467,7 @@ class SdrEngine private constructor(
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                     .build()
             )
-            .setBufferSizeInBytes(audioRate / 10 * 4) // 100ms
+            .setBufferSizeInBytes(audioRate / 5 * 4) // 200ms：防 DSP 抖动欠载（卡顿/爆音），收音机延迟无感
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         track.play()
