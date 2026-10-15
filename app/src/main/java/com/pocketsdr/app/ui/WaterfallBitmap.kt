@@ -3,13 +3,13 @@ package com.pocketsdr.app.ui
 import android.graphics.Bitmap
 
 /**
- * 瀑布图 Bitmap 环形缓冲。
+ * 瀑布图双缓冲 Bitmap。
  *
  * 性能设计：避免 Compose Canvas 逐像素 drawRect（每帧 10 万次调用）。
- * 行数据写入 Bitmap 像素，绘制时一次 drawImage 全屏贴图。
+ * 写线程（DSP）pushRow 更新 back 页并整页拷贝到 front 页原子发布；
+ * 绘制线程读 front 页——无锁、无撕裂（Bitmap 像素访问非线程安全，双缓冲根治）。
  *
- * 新行写在顶部（时间从上往下），push 时整体下移一行。
- * 1024 bin × 200 行，一次行平移拷贝 ~200KB，15 行/秒毫无压力。
+ * 新行写在顶部（时间从上往下），push 时历史整体下移一行。
  */
 class WaterfallBitmap(
     val bins: Int,
@@ -17,7 +17,12 @@ class WaterfallBitmap(
     private val dbMin: Float = -90f,
     private val dbMax: Float = 0f
 ) {
-    val bitmap: Bitmap = Bitmap.createBitmap(bins, rows, Bitmap.Config.ARGB_8888)
+    private var backBitmap = Bitmap.createBitmap(bins, rows, Bitmap.Config.ARGB_8888)
+    private var frontBitmap = Bitmap.createBitmap(bins, rows, Bitmap.Config.ARGB_8888)
+
+    /** 绘制用 Bitmap（front 页，发布后只读） */
+    @Volatile var bitmap: Bitmap = frontBitmap
+        private set
 
     private val rowPixels = IntArray(bins)
     private val shiftBuf = IntArray(bins * (rows - 1))
@@ -46,27 +51,31 @@ class WaterfallBitmap(
         }
     }
 
-    /** 推一行 dB 数据（长度 ≥ bins） */
-    @Synchronized
+    /** 推一行 dB 数据（长度 ≥ bins）。DSP 线程调用，无锁。 */
     fun pushRow(db: FloatArray) {
         val range = dbMax - dbMin
         for (x in 0 until bins) {
             val v = ((db[x] - dbMin) / range).coerceIn(0f, 1f)
             rowPixels[x] = lut[(v * 255f).toInt()]
         }
-        // 下移一行：row 0..rows-2 → 1..rows-1，新行写入 row 0（最新在上）
-        bitmap.getPixels(shiftBuf, 0, bins, 0, 0, bins, rows - 1)
-        bitmap.setPixels(shiftBuf, 0, bins, 0, 1, bins, rows - 1)
-        bitmap.setPixels(rowPixels, 0, bins, 0, 0, bins, 1)
+        // back 页：历史下移 + 新行进 row0
+        backBitmap.getPixels(shiftBuf, 0, bins, 0, 0, bins, rows - 1)
+        backBitmap.setPixels(shiftBuf, 0, bins, 0, 1, bins, rows - 1)
+        backBitmap.setPixels(rowPixels, 0, bins, 0, 0, bins, 1)
+        // 发布：交换 front/back（旧 front 变 back 供下次写入，back 变 front 供绘制）
+        val newFront = backBitmap
+        backBitmap = frontBitmap  // 此时 back = 旧 front（含完整历史，下次在其上继续滚动）
+        frontBitmap = newFront
+        bitmap = newFront
     }
 
     /** 清空（初始化为噪底色） */
-    @Synchronized
     fun clear() {
         val dark = lut[0]
         java.util.Arrays.fill(rowPixels, dark)
         for (y in 0 until rows) {
-            bitmap.setPixels(rowPixels, 0, bins, 0, y, bins, 1)
+            backBitmap.setPixels(rowPixels, 0, bins, 0, y, bins, 1)
+            frontBitmap.setPixels(rowPixels, 0, bins, 0, y, bins, 1)
         }
     }
 }
