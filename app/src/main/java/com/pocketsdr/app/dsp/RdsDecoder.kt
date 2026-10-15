@@ -21,7 +21,6 @@ class RdsDecoder(private val fs: Float) {
 
     // ===== 基带 =====
     private val dataLp = Biquad.Lowpass(2400f, fs)
-    private val dataLp2 = Biquad.Lowpass(2400f, fs)
 
     // ===== 位同步（早晚门：额定 1187.5Hz 时钟 + 过零微调）=====
     private val delayHalf = (fs / 2375f).toInt().coerceAtLeast(2)
@@ -62,7 +61,8 @@ class RdsDecoder(private val fs: Float) {
         val qBr = mpx * s
         val err = loopLp.process(iBr * qBr)
         loopInteg = loopInteg * 0.99999 - err * 2e-6
-        val base = dataLp2.process(dataLp.process(iBr))
+        // 单级 2.4k 低通（双级联是模拟 PLL 时代遗留，Costas 环外一级足够）
+        val base = dataLp.process(iBr)
 
         // Gardner 位同步
         clockVco += clockVcoInc + gardnerTrim
