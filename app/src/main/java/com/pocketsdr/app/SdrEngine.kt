@@ -269,10 +269,10 @@ class SdrEngine private constructor(
     }
 
     private fun updateSpectrum(n: Int) {
-        // 4 段 FFT 平均（起点 0/4096/8192/12288）：噪声底 ±6dB 波动 → ±3dB，弱信号更清晰
+        // 4 段 FFT 平均（起点 0/4096/8192/12288 均匀覆盖全块）：噪声底 ±6dB → ±3dB
         java.util.Arrays.fill(fftPower, 0f)
         val avgN = 4
-        val segStart = (n / avgN) - fftSize   // 4096-1024 = 3072 段间距
+        val segStart = n / avgN   // 4096：均匀间隔，段尾 12288+1024=13312 < 16384 ✓
         var base = 0
         for (a in 0 until avgN) {
             fft.powerSpectrumSeg(iqBuf, base, fftPower)
