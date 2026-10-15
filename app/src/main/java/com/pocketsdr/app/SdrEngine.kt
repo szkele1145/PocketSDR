@@ -45,7 +45,7 @@ class SdrEngine private constructor(
     fun setHardwareDirectSampling(mode: Int): Boolean {
         val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
         val ok = src.setDirectSampling(mode)
-        if (ok) resetDspState()
+        if (ok) pendingReset = true
         return ok
     }
 
@@ -60,7 +60,7 @@ class SdrEngine private constructor(
     fun setHardwareOffsetTuning(on: Boolean): Boolean {
         val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
         val ok = src.setOffsetTuning(on)
-        if (ok) resetDspState()
+        if (ok) pendingReset = true
         return ok
     }
 
@@ -207,47 +207,77 @@ class SdrEngine private constructor(
         submitTune(f, _tunedFreq + (f - _centerFreq))
     }
 
-    /** 只调收听点，不动源中心（频谱内点选） */
+    /** 只调收听点，不动源中心（频谱内点选/步进连跳）。
+     *  轻 reset：只对齐 NCO 相位避免爆音，不清滤波器/PLL/AGC——
+     *  连跳（60ms 间隔）时反复全清会让立体声永远锁不上、AGC 抽搐。 */
     fun tuneWithinSpan(freqHz: Long) {
-        submitTune(_centerFreq, freqHz)
+        submitTune(_centerFreq, freqHz, light = true)
     }
 
-    // ---------- 调谐请求队列（UI 线程投递 → DSP 块头原子应用） ----------
+    // ---------- 调谐/模式请求队列（UI 线程投递 → DSP 块头原子应用） ----------
+    // 所有滤波器/PLL/AGC 状态只允许 DSP 线程触碰：UI 直接 reset 会与
+    // demodulate() 并发撕裂同一批对象（切换模式多次后 FM 失效的根因）。
     private val tuneLock = Any()
     private var pendingCenter: Long? = null
     private var pendingTuned: Long? = null
+    private var pendingLight = false
+    @Volatile private var pendingMode: Mode? = null
+    /** UI 线程请求 DSP 重置（硬件直采/偏移调谐后），块头原子执行 */
+    @Volatile private var pendingReset = false
 
-    private fun submitTune(center: Long, tuned: Long) {
+    private fun submitTune(center: Long, tuned: Long, light: Boolean = false) {
         synchronized(tuneLock) {
+            // 只有本次请求链全为 light 才轻处理；新请求重置该标志
+            pendingLight = if (pendingCenter == null) light else (pendingLight && light)
             pendingCenter = center
             pendingTuned = tuned
         }
     }
 
-    /** DSP 线程每块调用：原子应用组合调谐状态（center+tuned 一致更新） */
+    /** 切换解调模式：只入队，重置在 DSP 线程块头原子执行 */
+    fun selectMode(m: Mode) {
+        pendingMode = m
+    }
+
+    /** DSP 线程每块调用：原子应用调谐+模式状态（center+tuned+mode 一致更新） */
     private fun applyPendingTune() {
         var c: Long? = null
         var t: Long? = null
+        var light = false
+        var m: Mode? = null
+        var needResetNow = false
         synchronized(tuneLock) {
+            m = pendingMode
+            pendingMode = null
             if (pendingCenter != null) {
                 c = pendingCenter
                 t = pendingTuned
+                light = pendingLight
                 pendingCenter = null
                 pendingTuned = null
+                pendingLight = false
             }
+        }
+        if (pendingReset) { needResetNow = true; pendingReset = false }
+        var needReset = needResetNow
+        if (m != null && m != mode) {
+            mode = m            // DSP 线程写，demodulate 同线程读，无撕裂
+            needReset = true
         }
         if (c != null && t != null) {
             _centerFreq = c
             _tunedFreq = t
             // 调谐在 DSP 线程做（与 bulk 读天然串行，I2C 写不与读竞争）
             source.centerFreq = c
-            resetDspState()
+            if (light && !needReset) {
+                // 轻调谐：仅对齐 NCO 相位，滤波器/PLL/AGC 保留——
+                // 连跳（60ms 间隔）时反复全清会让立体声锁不上、AGC 抽搐
+                ncoPhase = 0.0
+            } else {
+                needReset = true
+            }
         }
-    }
-
-    fun selectMode(m: Mode) {
-        mode = m
-        resetDspState()
+        if (needReset) resetDspState()
     }
 
     private fun resetDspState() {

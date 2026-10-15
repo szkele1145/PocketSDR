@@ -1,8 +1,10 @@
 package com.pocketsdr.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -12,7 +14,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,14 +23,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.pocketsdr.app.SdrEngine
 import com.pocketsdr.app.FreqStore
+import com.pocketsdr.app.SdrEngine
 import kotlinx.coroutines.launch
 
 /**
- * 收音页（主页面）：频谱大面积铺满上半屏，下方只有
- * 大频率 + 步进按钮 + 音量滑条——收音场景的全部直接操作。
- * 次要功能（模式/波段/静噪/录音/搜台/收藏）都在设置页。
+ * 收音页（横屏主界面）——布局照 SDR# 桌面版：
+ *   ① 顶部频率刻度（跟随变焦视角）
+ *   ② 中部频谱 + 瀑布铺满（点峰跳频 / 拖拽移中心 / 双指缩放）
+ *   ③ 底部控制条两行：大频率 + 步进 + 音量 ／ 模式直选 + 静噪
+ * 一切常用操作都在一屏内一指点到，不需要翻页。
  */
 @Composable
 fun RxPage(
@@ -40,7 +43,7 @@ fun RxPage(
     signalDb: Float,
     stereoLock: Float,
     rdsName: String,
-    onExit: () -> Unit
+    onExit: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
@@ -48,16 +51,14 @@ fun RxPage(
     var viewSpan by remember { mutableStateOf(engine.sampleRate.toLong()) }
     var volume by remember { mutableStateOf(engine.volume) }
     var mode by remember { mutableStateOf(engine.mode) }
-    val ver = remember {
-        try { "v" + context.packageManager.getPackageInfo(context.packageName, 0).versionName }
-        catch (_: Exception) { "" }
-    }
+    var squelch by remember { mutableStateOf(engine.squelchDb) }
 
     // 引擎状态轮询同步
     LaunchedEffect(Unit) {
         while (true) {
             tuned = engine.tunedFreq
             center = engine.centerFreq
+            mode = engine.mode
             kotlinx.coroutines.delay(250)
         }
     }
@@ -69,7 +70,7 @@ fun RxPage(
                 .fillMaxWidth()
                 .background(Color(0xCC101826))
                 .padding(horizontal = 8.dp),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
                 "%.1fM".format((center - viewSpan / 2) / 1e6),
@@ -84,8 +85,9 @@ fun RxPage(
                 fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
             )
         }
-        // ===== 频谱（占满上部，点峰跳频） =====
-        Box(Modifier.fillMaxWidth().weight(0.62f)) {
+
+        // ===== 频谱 + 瀑布（占满剩余空间，横屏主体） =====
+        Box(Modifier.fillMaxWidth().weight(1f)) {
             SpectrumWaterfall(
                 spectrum = spectrum,
                 waterfall = waterfall,
@@ -99,7 +101,7 @@ fun RxPage(
                     tuned = engine.tunedFreq
                 },
                 onDragTune = { delta ->
-                    engine.recenter(center - delta)
+                    engine.recenter(center + delta)
                     center = engine.centerFreq
                     tuned = engine.tunedFreq
                 },
@@ -108,18 +110,6 @@ fun RxPage(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            // 信号强度徽标
-            Surface(
-                color = Color(0xCC101826), shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-            ) {
-                Text(
-                    "${sMeter(signalDb)}  ${signalDb.toInt()}dB",
-                    color = if (signalDb > engine.squelchDb) Color(0xFF00E5FF) else Color(0xFF5A6B7F),
-                    fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
             // RDS 电台名（锁定后左上角）
             if (mode == SdrEngine.Mode.WFM && rdsName.isNotEmpty()) {
                 Surface(
@@ -136,49 +126,97 @@ fun RxPage(
             }
         }
 
-        // ===== 大频率 + 步进 =====
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    formatFreq(tuned),
-                    fontSize = 44.sp, fontWeight = FontWeight.Bold,
-                    color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    "${mode.label} · $status",
-                    fontSize = 11.sp, color = Color(0xFF5A6B7F),
-                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
-                )
-            }
-            // 步进按钮（长按连跳）
-            StepButtons(engine, mode) { tuned = engine.tunedFreq }
-        }
+        // ===== 底部控制条 =====
+        Surface(color = Color(0xFF101826), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                // 第一行：大频率 + 步进 + 音量
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            formatFreq(tuned),
+                            fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                            color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
+                            maxLines = 1
+                        )
+                        Text(
+                            "${mode.label} · $status" + "  ${sMeter(signalDb)} ${signalDb.toInt()}dB",
+                            fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    StepButtons(engine, mode) { tuned = engine.tunedFreq }
+                    Spacer(Modifier.width(14.dp))
+                    Text("🔊", fontSize = 15.sp)
+                    Slider(
+                        value = volume, onValueChange = {
+                            volume = it; engine.volume = it
+                            FreqStore(context).lastVolume = it
+                        },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.width(150.dp).padding(start = 4.dp),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFF00E5FF),
+                            activeTrackColor = Color(0xFF00A8E8),
+                            inactiveTrackColor = Color(0xFF1A2230)
+                        )
+                    )
+                    Text(
+                        "${(volume * 100).toInt()}%",
+                        fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(start = 4.dp).width(34.dp)
+                    )
+                }
 
-        // ===== 音量（唯一的滑条，大而好拖） =====
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp)
-        ) {
-            Text("🔊", fontSize = 16.sp)
-            Slider(
-                value = volume, onValueChange = {
-                    volume = it; engine.volume = it
-                    FreqStore(context).lastVolume = it
-                },
-                valueRange = 0f..1f, modifier = Modifier.weight(1f).padding(start = 6.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFF00E5FF),
-                    activeTrackColor = Color(0xFF00A8E8),
-                    inactiveTrackColor = Color(0xFF1A2230)
-                )
-            )
+                // 第二行：模式直选（横向排开，一点即换）+ 静噪
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    SdrEngine.Mode.entries.forEach { m ->
+                        ModeButton(m.label, mode == m) {
+                            engine.selectMode(m)
+                            mode = m
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("静噪", fontSize = 10.sp, color = Color(0xFF5A6B7F))
+                    Slider(
+                        value = squelch, onValueChange = { squelch = it; engine.squelchDb = it },
+                        valueRange = -80f..-10f,
+                        modifier = Modifier.width(120.dp).padding(start = 4.dp),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFFF5252),
+                            activeTrackColor = Color(0xFFFF7961),
+                            inactiveTrackColor = Color(0xFF1A2230)
+                        )
+                    )
+                    Text(
+                        "${squelch.toInt()}dB",
+                        fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(start = 4.dp).width(42.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 模式按钮：选中高亮实心，一眼看得出当前收听类型 */
+@Composable
+private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        color = if (selected) Color(0xFF00E5FF) else Color(0xFF1A2230),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .height(34.dp)
+            .widthIn(min = 56.dp)
+            .clickable { onClick() }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
             Text(
-                "${(volume * 100).toInt()}%",
-                fontSize = 12.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(start = 6.dp)
+                label,
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) Color(0xFF06121A) else Color(0xFF8FA3B8),
+                modifier = Modifier.padding(horizontal = 10.dp)
             )
         }
     }
@@ -213,26 +251,11 @@ private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> 
             }
         }
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = {
-            engine.tuneWithinSpan(engine.tunedFreq + step); onTuned()
-        }, modifier = Modifier
-            .size(56.dp)
-            .pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    startRepeat(true)
-                    tryAwaitRelease()
-                    repeatJob?.cancel()
-                })
-            }) {
-            Icon(Icons.Filled.KeyboardArrowUp, "步进+", tint = Color(0xFF00E5FF),
-                modifier = Modifier.size(36.dp))
-        }
-        Text(stepLabel, fontSize = 10.sp, color = Color(0xFF5A6B7F))
+    Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = {
             engine.tuneWithinSpan(engine.tunedFreq - step); onTuned()
         }, modifier = Modifier
-            .size(56.dp)
+            .size(46.dp)
             .pointerInput(Unit) {
                 detectTapGestures(onPress = {
                     startRepeat(false)
@@ -241,7 +264,25 @@ private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> 
                 })
             }) {
             Icon(Icons.Filled.KeyboardArrowDown, "步进-", tint = Color(0xFF00E5FF),
-                modifier = Modifier.size(36.dp))
+                modifier = Modifier.size(32.dp))
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(stepLabel, fontSize = 10.sp, color = Color(0xFF5A6B7F),
+                fontFamily = FontFamily.Monospace)
+        }
+        IconButton(onClick = {
+            engine.tuneWithinSpan(engine.tunedFreq + step); onTuned()
+        }, modifier = Modifier
+            .size(46.dp)
+            .pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    startRepeat(true)
+                    tryAwaitRelease()
+                    repeatJob?.cancel()
+                })
+            }) {
+            Icon(Icons.Filled.KeyboardArrowUp, "步进+", tint = Color(0xFF00E5FF),
+                modifier = Modifier.size(32.dp))
         }
     }
 }
