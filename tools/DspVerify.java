@@ -321,6 +321,8 @@ public class DspVerify {
         rdsRadioFrequencyTest();
         // 9) SSB 慢速 AGC：弱/强信号输出归一
         ssbAgcTest();
+        // 10) 仿真音频频谱纯净度：新和弦设计的 MPX 频谱应干净（<2kHz 能量集中，19k 导频区无泄漏）
+        simAudioPurityTest();
         System.out.println(fails == 0 ? "\nALL PASS" : "\n" + fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
     }
@@ -397,6 +399,53 @@ public class DspVerify {
         System.out.printf("  诊断: 弱信号峰值=%.3f 强信号峰值=%.3f%n", weakPeak, strongPeak);
         check("SSB AGC 动态范围压缩", weakPeak > 0.1 && strongPeak < 0.95 && strongPeak > 0.05,
             "weak=" + weakPeak + " strong=" + strongPeak);
+    }
+
+    /** 仿真音频频谱纯净度：验证新和弦（基音+八度+五度）的 MPX 频谱 */
+    static void simAudioPurityTest() {
+        // 生成 0.5s 的 WFM MPX（同 SimulatedSource 逻辑）：audio 和弦 + 19k 导频
+        double fs = 1024000;
+        int n = (int) (fs / 2);
+        // 真实源码同参：基音 330Hz → rad/样本 = 2π·330/1.024M ≈ 0.00203
+        double audioRate = 2 * Math.PI * 330 / fs;
+        double audioPhase = 0;
+        double pilotPhase = 0, modPhase = 0;
+        float[] mpx = new float[n];
+        for (int i = 0; i < n; i++) {
+            audioPhase += audioRate;
+            if (audioPhase > 2 * Math.PI) audioPhase -= 2 * Math.PI;
+            // 新和弦
+            double audio = Math.sin(audioPhase) * 0.5 + Math.sin(audioPhase * 2) * 0.3
+                + Math.sin(audioPhase * 3) * 0.2;
+            pilotPhase += 2 * Math.PI * 19000 / fs;
+            if (pilotPhase > 2 * Math.PI) pilotPhase -= 2 * Math.PI;
+            modPhase += audio * 75000 * 2 * Math.PI / fs;
+            // MPX 域瞬时频率偏移 = 鉴频输出
+            mpx[i] = (float) (audio + Math.cos(pilotPhase) * 0.1);
+        }
+        // FFT 看频谱：0-2kHz 应有主能量，3k-18k 应接近 0，19k 只有导频
+        int fftN = 4096;
+        Fft fft = new Fft(fftN);
+        // 取中段样本避免边界
+        float[] iq = new float[fftN * 2];
+        for (int i = 0; i < fftN; i++) { iq[i * 2] = mpx[n / 2 + i]; iq[i * 2 + 1] = 0f; }
+        float[] spec = fft.powerSpectrum(iq);
+        // bin 对应频率: bin k = k * fs / fftN
+        double binHz = fs / fftN;   // 250Hz
+        double eLow = 0, eMid = 0, ePilot = 0, eTotal = 0;
+        for (int k = 1; k < fftN / 2; k++) {
+            double f = k * binHz;
+            double p = spec[k];
+            eTotal += p;
+            if (f < 2000) eLow += p;
+            else if (f > 3000 && f < 18000) eMid += p;
+            else if (f > 18500 && f < 19500) ePilot += p;
+        }
+        double midShare = eMid / (eTotal + 1e-12);
+        System.out.printf("  诊断: <2kHz 能量 %.1f%% · 3-18k 泄漏 %.4f%% · 导频段 %.2f%%%n",
+            eLow / eTotal * 100, midShare * 100, ePilot / eTotal * 100);
+        // 中频段（3-18k）泄漏应 < 2%（砸进 RDS/立体声频段的杂音）
+        check("仿真音频频谱纯净", midShare < 0.02, "3-18k 泄漏=" + (midShare * 100) + "%");
     }
 
     static boolean rdsSyndromeZero(long word) {

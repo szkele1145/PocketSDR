@@ -69,8 +69,13 @@ class SimulatedSource(
 
     private fun ensureStations() {
         if (stations.isNotEmpty()) return
-        fun add(freq: Long, type: Int, level: Float, dev: Float = 75_000f) =
-            stations.add(Station(freq, type, level, dev, 0.031 * (1 + (stations.size % 3))))
+        // 基音 200-450Hz（人声/音乐基频区，远离 19k 导频与 RDS）：
+        // rad/样本 = 2π·f/fs，f=300Hz 时 ≈ 0.00184
+        val baseF = listOf(220.0, 330.0, 440.0, 260.0, 370.0)
+        fun add(freq: Long, type: Int, level: Float, dev: Float = 75_000f) {
+            val f0 = baseF[stations.size % baseF.size]
+            stations.add(Station(freq, type, level, dev, 2.0 * PI * f0 / sampleRate.toDouble()))
+        }
         // FM 广播段
         add(98_100_000, 0, 0.9f); add(105_700_000, 0, 0.8f); add(103_900_000, 0, 0.95f)
         add(100_000_000, 0, 0.75f); add(96_600_000, 0, 1.0f); add(91_500_000, 0, 0.7f)
