@@ -189,16 +189,24 @@ fun SdrScreen(
         ) {
             // ---- 频率显示 + 微调 ----
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = formatFreq(tuned),
-                    fontSize = 40.sp, fontWeight = FontWeight.Bold,
-                    color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
-                    modifier = Modifier
-                        .weight(1f)
-                        .pointerInput(Unit) {
-                            detectTapGestures { showFreqInput = true }
-                        }
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = formatFreq(tuned),
+                        fontSize = 40.sp, fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                detectTapGestures { showFreqInput = true }
+                            }
+                    )
+                    // 输入提示（提升可发现性）
+                    Text(
+                        "点此输入频率 (MHz)",
+                        fontSize = 9.sp, color = Color(0xFF3D4B5E),
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     // 模式自适应步进：WFM 100k / NFM 12.5k / AM 25k / SSB 100Hz
                     val step = remember(mode) {
