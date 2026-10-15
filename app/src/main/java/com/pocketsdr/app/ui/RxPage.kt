@@ -63,6 +63,27 @@ fun RxPage(
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF0B0E14))) {
+        // ===== 频率刻度行（跟随 viewSpan 变焦视角） =====
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xCC101826))
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween
+        ) {
+            Text(
+                "%.1fM".format((center - viewSpan / 2) / 1e6),
+                fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+            )
+            Text(
+                "%.1fM".format(center / 1e6),
+                fontSize = 9.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace
+            )
+            Text(
+                "%.1fM".format((center + viewSpan / 2) / 1e6),
+                fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+            )
+        }
         // ===== 频谱（占满上部，点峰跳频） =====
         Box(Modifier.fillMaxWidth().weight(0.62f)) {
             SpectrumWaterfall(
