@@ -342,9 +342,8 @@ fun SdrScreen(
                         tint = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)
                     )
                 }
-                // 录制中：实时时长徽标（与 LaunchedEffect 同步循环）
+                // 录制中：实时时长徽标（读 recTick 建立依赖 → LaunchedEffect 自增触发重组）
                 if (recording) {
-                    recTick += 1
                     @Suppress("UNUSED_EXPRESSION") recTick
                     val sec = (System.currentTimeMillis() - recStartMs) / 1000
                     Text(
