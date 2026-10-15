@@ -14,3 +14,12 @@ internal fun sMeter(dbfs: Float): String {
         else -> "S1"
     }
 }
+
+/** 视野宽度（Hz）→ 人类可读，如 1024k / 256k / 128k */
+internal fun formatSpan(hz: Long): String {
+    return when {
+        hz >= 1_000_000 -> "%.1fM".format(hz / 1e6)
+        hz >= 1_000 -> "${hz / 1_000}k"
+        else -> "${hz}Hz"
+    }
+}

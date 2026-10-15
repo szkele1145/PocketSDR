@@ -19,7 +19,7 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * 频谱 + 瀑布复合视图（竖屏核心显示区）。
+ * 频谱 + 瀑布复合视图（横屏核心显示区）。
  *
  * 上 40%：实时 FFT 谱线（tuned 标记线）
  * 下 60%：瀑布（WaterfallBitmap，一次 drawImage 贴图）
@@ -39,8 +39,12 @@ fun SpectrumWaterfall(
     dbMin: Float,
     dbMax: Float,
     onTune: (Long) -> Unit,
+    /** 拖动增量（Hz），正=往高频方向平移中心 */
     onDragTune: (Long) -> Unit,
     onZoom: (Float) -> Unit,
+    /** 拖动开始/结束，调用方用它维护"本地权威中心"，避免拿轮询到的旧值当基准 */
+    onDragStart: () -> Unit = {},
+    onDragEnd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // 双缓冲：key 跟踪 bitmap 引用（发布交换后重组取新页）
@@ -59,8 +63,12 @@ fun SpectrumWaterfall(
         }
         .pointerInput(span) {
             var accum = 0f
+            var active = false
             detectDragGestures(
-                onDragStart = { accum = 0f },
+                onDragStart = {
+                    accum = 0f
+                    if (!active) { active = true; onDragStart() }
+                },
                 onDrag = { change, drag ->
                     val hzPerPx = span.toFloat() / max(size.width, 1)
                     accum -= drag.x * hzPerPx
@@ -68,7 +76,9 @@ fun SpectrumWaterfall(
                         onDragTune(accum.toLong())
                         accum = 0f
                     }
-                }
+                },
+                onDragEnd = { if (active) { active = false; onDragEnd() } },
+                onDragCancel = { if (active) { active = false; onDragEnd() } }
             )
         }
         .pointerInput(span) {
@@ -139,17 +149,13 @@ fun SpectrumWaterfall(
             }
         }
 
-        // ---- 频率网格（每 MHz 竖线 + 刻度标签） ----
-        val mhzStepPx = w * 1_000_000f / span
-        if (mhzStepPx > 30f) {  // 太密就不画
-            var mhz = (centerFreq / 1_000_000) - (span / 2_000_000)
-            var gridX = ((mhz + 1) * 1_000_000 - (centerFreq - span / 2)).toFloat() / span * w
-            while (gridX < w) {
-                if (gridX > 0) {
-                    drawLine(Color(0x1AFFFFFF), Offset(gridX, 0f), Offset(gridX, h), strokeWidth = 1f)
-                }
-                mhz++
-                gridX += mhzStepPx
+        // ---- 频率网格（与顶部 FreqRuler 同源刻度：数字和竖线永远对齐） ----
+        val axis = freqAxis(centerFreq, span, w, 64f)
+        val leftHz = centerFreq - span / 2
+        axis.ticks.forEach { f ->
+            val gx = ((f - leftHz).toFloat() / span) * w
+            if (gx > 0f && gx < w) {
+                drawLine(Color(0x1AFFFFFF), Offset(gx, 0f), Offset(gx, h), strokeWidth = 1f)
             }
         }
         // 边缘频率标签（Canvas 外用 Text 叠加，这里画端点短线）

@@ -41,20 +41,24 @@ class RdsEncoder(private val stationName: String) {
         pushWord(crc10(0x1234) xor OFFSETS[0], 10)
 
         // 块 B：group 0A (type=0000, version=0) + TP=0 + PTY=1(新闻) + 段地址
-        val blockB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or (segment and 0x3)
-        // group(4) + version(1) + TP(1) + PTY(5) + seg(2) = 13 位，B 块是 16 位
-        // 规范：blockB = group(4) | version(1) | TP(1) | PTY(5) | (5 个组相关位)
         val bB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or (segment and 0x3)
         pushWord(bB, 16)
         pushWord(crc10(bB) xor OFFSETS[1], 10)
 
-        // 块 C/D：段内 2 字符（ASCII 高 8 位在前）
+        // 块 C：group 0A 时是 AF（替代频率）表，无 AF 用 0xE0 填充码
+        val bC = 0xE0E0
+        pushWord(bC, 16)
+        pushWord(crc10(bC) xor OFFSETS[2], 10)
+
+        // 块 D：PS 电台名的 2 个字符（IEC 62106：0A/0B 的 PS 都在 D 块）。
+        // 之前这里漏了整块 D（只写 78 位，余 26 位补零），全零块恰好能用 A 块偏置字
+        // 通过校验，于是每组末尾都被误判成"重同步 A 块"，blockIdx 永远到不了 4，
+        // decodeGroup 一次都没被调用过——台名自然永远锁不上。
         val c1 = chars[segment * 2].code and 0xFF
         val c2 = chars[segment * 2 + 1].code and 0xFF
-        pushWord(c1, 8)
-        pushWord(c2, 8)
-        val bC = (c1 shl 8) or c2
-        pushWord(crc10(bC) xor OFFSETS[2], 10)
+        val bD = (c1 shl 8) or c2
+        pushWord(bD, 16)
+        pushWord(crc10(bD) xor OFFSETS[3], 10)
         return bits
     }
 

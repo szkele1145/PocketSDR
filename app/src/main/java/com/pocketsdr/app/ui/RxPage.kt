@@ -9,7 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FreqStore
@@ -46,45 +46,32 @@ fun RxPage(
     onExit: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // SharedPreferences 只建一次：之前每次滑条回调都 new 一个 FreqStore 并写盘，
+    // 拖动一秒就是几十次磁盘写入，既是浪费也会让滑条发涩。
+    val store = remember { FreqStore(context) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
     var center by remember { mutableStateOf(engine.centerFreq) }
     var viewSpan by remember { mutableStateOf(engine.sampleRate.toLong()) }
     var volume by remember { mutableStateOf(engine.volume) }
     var mode by remember { mutableStateOf(engine.mode) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
+    // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
+    // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
+    var dragBase by remember { mutableStateOf<Long?>(null) }
 
-    // 引擎状态轮询同步
+    // 引擎状态轮询同步（250ms 足够跟手，又不会给 UI 线程加压）
     LaunchedEffect(Unit) {
         while (true) {
             tuned = engine.tunedFreq
-            center = engine.centerFreq
             mode = engine.mode
+            if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF0B0E14))) {
-        // ===== 频率刻度行（跟随 viewSpan 变焦视角） =====
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xCC101826))
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                "%.1fM".format((center - viewSpan / 2) / 1e6),
-                fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
-            )
-            Text(
-                "%.1fM".format(center / 1e6),
-                fontSize = 9.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace
-            )
-            Text(
-                "%.1fM".format((center + viewSpan / 2) / 1e6),
-                fontSize = 9.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
-            )
-        }
+        // ===== 频率刻度行（与频谱网格同源，跟随 viewSpan 变焦） =====
+        FreqRuler(centerFreq = center, span = viewSpan)
 
         // ===== 频谱 + 瀑布（占满剩余空间，横屏主体） =====
         Box(Modifier.fillMaxWidth().weight(1f)) {
@@ -101,12 +88,22 @@ fun RxPage(
                     tuned = engine.tunedFreq
                 },
                 onDragTune = { delta ->
-                    engine.recenter(center + delta)
-                    center = engine.centerFreq
+                    // 以拖动自己的累积基准推进，不依赖轮询值
+                    val base = dragBase ?: center.also { dragBase = it }
+                    val next = base + delta
+                    dragBase = next
+                    engine.recenter(next)
+                    center = next
                     tuned = engine.tunedFreq
                 },
                 onZoom = { z ->
                     viewSpan = (viewSpan / z).toLong().coerceIn(128_000L, engine.sampleRate.toLong())
+                },
+                onDragStart = { dragBase = center },
+                onDragEnd = {
+                    dragBase = null
+                    center = engine.centerFreq
+                    tuned = engine.tunedFreq
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -123,6 +120,24 @@ fun RxPage(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
+            }
+            // 视野宽度指示 / 一键复位：捏合缩放没有可见入口，必须给个能点回来的按钮
+            val fullSpan = engine.sampleRate.toLong()
+            val zoomed = viewSpan < fullSpan
+            Surface(
+                color = if (zoomed) Color(0xCC1C3550) else Color(0x88101826),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .clickable { viewSpan = fullSpan }
+            ) {
+                Text(
+                    "视野 " + formatSpan(viewSpan) + if (zoomed) "  ⟲" else "",
+                    color = if (zoomed) Color(0xFF7DF3FF) else Color(0xFF5A6B7F),
+                    fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
             }
         }
 
@@ -148,10 +163,10 @@ fun RxPage(
                     Spacer(Modifier.width(14.dp))
                     Text("🔊", fontSize = 15.sp)
                     Slider(
-                        value = volume, onValueChange = {
-                            volume = it; engine.volume = it
-                            FreqStore(context).lastVolume = it
-                        },
+                        value = volume,
+                        onValueChange = { volume = it; engine.volume = it },
+                        // 只在松手时落盘：拖动过程中每帧写 SharedPreferences 会发涩
+                        onValueChangeFinished = { store.lastVolume = volume },
                         valueRange = 0f..1f,
                         modifier = Modifier.width(150.dp).padding(start = 4.dp),
                         colors = SliderDefaults.colors(
@@ -179,7 +194,8 @@ fun RxPage(
                     Spacer(Modifier.weight(1f))
                     Text("静噪", fontSize = 10.sp, color = Color(0xFF5A6B7F))
                     Slider(
-                        value = squelch, onValueChange = { squelch = it; engine.squelchDb = it },
+                        value = squelch,
+                        onValueChange = { squelch = it; engine.squelchDb = it },
                         valueRange = -80f..-10f,
                         modifier = Modifier.width(120.dp).padding(start = 4.dp),
                         colors = SliderDefaults.colors(
@@ -222,7 +238,7 @@ private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 步进按钮对（模式自适应步长，长按连续） */
+/** 步进按钮对（模式自适应步长；轻点走一步，按住连跳，松手即停） */
 @Composable
 private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> Unit) {
     val step = remember(mode) {
@@ -238,51 +254,53 @@ private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> 
         step >= 1_000 -> if (step % 1_000 == 0L) "${step / 1_000}k" else "%.1fk".format(step / 1e3)
         else -> "${step}Hz"
     }
-    var repeatJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    val scope = rememberCoroutineScope()
-    fun startRepeat(up: Boolean) {
-        repeatJob?.cancel()
-        repeatJob = scope.launch {
-            kotlinx.coroutines.delay(400)
-            while (true) {
-                val f = engine.tunedFreq + if (up) step else -step
-                engine.tuneWithinSpan(f)
-                kotlinx.coroutines.delay(60)
-            }
-        }
-    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = {
-            engine.tuneWithinSpan(engine.tunedFreq - step); onTuned()
-        }, modifier = Modifier
+        StepArrow(up = false, step = step, engine = engine, onTuned = onTuned)
+        Text(
+            stepLabel, fontSize = 10.sp, color = Color(0xFF5A6B7F),
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(42.dp),
+            textAlign = TextAlign.Center
+        )
+        StepArrow(up = true, step = step, engine = engine, onTuned = onTuned)
+    }
+}
+
+/**
+ * 单个步进箭头。手势全部自己处理，不再叠 IconButton.onClick，
+ * 避免"点一下却跳两步"以及松手后又多跳一次的老问题。
+ */
+@Composable
+private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    Box(
+        modifier = Modifier
             .size(46.dp)
-            .pointerInput(Unit) {
+            .pointerInput(step, up) {
                 detectTapGestures(onPress = {
-                    startRepeat(false)
+                    val dir = if (up) step else -step
+                    // 按下立刻走一步，手感跟手
+                    engine.tuneWithinSpan(engine.tunedFreq + dir)
+                    onTuned()
+                    val job = scope.launch {
+                        kotlinx.coroutines.delay(400)   // 长按判定门槛
+                        while (true) {
+                            engine.tuneWithinSpan(engine.tunedFreq + dir)
+                            onTuned()
+                            kotlinx.coroutines.delay(60)
+                        }
+                    }
                     tryAwaitRelease()
-                    repeatJob?.cancel()
+                    job.cancel()                        // 松手立即停，不会惯性乱跳
                 })
-            }) {
-            Icon(Icons.Filled.KeyboardArrowDown, "步进-", tint = Color(0xFF00E5FF),
-                modifier = Modifier.size(32.dp))
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stepLabel, fontSize = 10.sp, color = Color(0xFF5A6B7F),
-                fontFamily = FontFamily.Monospace)
-        }
-        IconButton(onClick = {
-            engine.tuneWithinSpan(engine.tunedFreq + step); onTuned()
-        }, modifier = Modifier
-            .size(46.dp)
-            .pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    startRepeat(true)
-                    tryAwaitRelease()
-                    repeatJob?.cancel()
-                })
-            }) {
-            Icon(Icons.Filled.KeyboardArrowUp, "步进+", tint = Color(0xFF00E5FF),
-                modifier = Modifier.size(32.dp))
-        }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            if (up) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            if (up) "步进+" else "步进-",
+            tint = Color(0xFF00E5FF),
+            modifier = Modifier.size(32.dp)
+        )
     }
 }

@@ -576,15 +576,16 @@ public class DspVerify {
             int bB = (0 << 12) | (1 << 5) | seg;
             p = pushWord(bits, p, bB, 16);
             p = pushWord(bits, p, rdsCrc10m(bB) ^ RDS_OFFSETS[1], 10);
-            // 块 C: 2 字符（注意 Kotlin 版把 2 字符放在 C 块 16 位）
-            int c1 = padded.charAt(seg * 2);
-            int c2 = padded.charAt(seg * 2 + 1);
-            int bC = (c1 << 8) | c2;
+            // 块 C: group 0A 是 AF 表，无 AF 用 0xE0 填充码
+            int bC = 0xE0E0;
             p = pushWord(bits, p, bC, 16);
             p = pushWord(bits, p, rdsCrc10m(bC) ^ RDS_OFFSETS[2], 10);
-            // 块 D: 0 填充（RDS group 0A 有 D 块，这里放 RT 备用 0）
-            p = pushWord(bits, p, 0x0000, 16);
-            p = pushWord(bits, p, rdsCrc10m(0x0000) ^ RDS_OFFSETS[3], 10);
+            // 块 D: PS 名的 2 个字符（IEC 62106：0A/0B 的 PS 在 D 块）
+            int c1 = padded.charAt(seg * 2);
+            int c2 = padded.charAt(seg * 2 + 1);
+            int bD = (c1 << 8) | c2;
+            p = pushWord(bits, p, bD, 16);
+            p = pushWord(bits, p, rdsCrc10m(bD) ^ RDS_OFFSETS[3], 10);
         }
         return bits;
     }
@@ -882,8 +883,9 @@ public class DspVerify {
             // group type / version 在 B 块（b[1]）高 4 位；PS 段地址在 B 块低 2 位
             if (((b[1] >> 12) & 0xF) != 0) return;
             int segment = b[1] & 0x3;
-            int c1 = (b[2] >> 8) & 0xFF;
-            int c2 = b[2] & 0xFF;
+            // PS 字符在 D 块（0A 的 C 块是 AF 表）
+            int c1 = (b[3] >> 8) & 0xFF;
+            int c2 = b[3] & 0xFF;
             psChars[segment * 2] = (c1 >= 32 && c1 <= 126) ? (char) c1 : ' ';
             psChars[segment * 2 + 1] = (c2 >= 32 && c2 <= 126) ? (char) c2 : ' ';
             psSeen[segment] = true;

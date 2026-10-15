@@ -50,17 +50,21 @@ fun SettingsPage(
     Column(
         Modifier.fillMaxSize()
             .background(Color(0xFF0B0E14))
-            .verticalScroll(rememberScrollState())
-            .padding(14.dp)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
         // 标题行
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("设置", fontSize = 20.sp, color = Color(0xFFD0DAE4), modifier = Modifier.weight(1f))
+            Text("设置", fontSize = 18.sp, color = Color(0xFFD0DAE4), modifier = Modifier.weight(1f))
             Text(status, fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1)
-            IconButton(onClick = onExit, modifier = Modifier.size(28.dp)) {
+            IconButton(onClick = onExit, modifier = Modifier.size(26.dp)) {
                 Icon(Icons.Filled.Close, "退出", tint = Color(0xFF5A6B7F))
             }
         }
+
+        // 横屏只有 400dp 出头的高度，竖排一长条根本翻不完；
+        // 改成左右两列，常用项（模式/波段/静噪）在左，工具与硬件在右。
+        Row(Modifier.fillMaxWidth().weight(1f)) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
 
         // ===== 调制模式 =====
         GroupCard("调制模式") {
@@ -100,6 +104,26 @@ fun SettingsPage(
             }
         }
 
+        // ===== 静噪 =====
+        GroupCard("静噪（往下拖 = 只收强台）") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Slider(
+                    value = squelch, onValueChange = { squelch = it; engine.squelchDb = it },
+                    valueRange = -80f..-10f, modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFFFF5252),
+                        activeTrackColor = Color(0xFFFF7961),
+                        inactiveTrackColor = Color(0xFF1A2230)
+                    )
+                )
+                Text("${squelch.toInt()} dB", fontSize = 12.sp,
+                    color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace)
+            }
+        }
+        }
+
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         // ===== 功能 =====
         GroupCard("功能") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
@@ -130,25 +154,6 @@ fun SettingsPage(
                     modifier = Modifier.weight(1f)) { Text("📄 日志", fontSize = 12.sp) }
             }
         }
-
-        // ===== 静噪 =====
-        GroupCard("静噪（往下拖 = 只收强台）") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Slider(
-                    value = squelch, onValueChange = { squelch = it; engine.squelchDb = it },
-                    valueRange = -80f..-10f, modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFFF5252),
-                        activeTrackColor = Color(0xFFFF7961),
-                        inactiveTrackColor = Color(0xFF1A2230)
-                    )
-                )
-                Text("${squelch.toInt()} dB", fontSize = 12.sp,
-                    color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace)
-            }
-        }
-
-        // ===== 硬件（RTL 时显示） =====
         if (engine.isRealSource) {
             GroupCard("RTL 硬件") {
                 var manualGain by remember { mutableStateOf(false) }
@@ -195,7 +200,7 @@ fun SettingsPage(
 
         // ===== 关于 =====
         GroupCard("关于") {
-            Text("PocketSDR · RTL-SDR 竖屏收音机", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+            Text("PocketSDR · RTL-SDR 横屏收音机", fontSize = 12.sp, color = Color(0xFF8FA3B8))
             Text("仿真模式可无硬件体验全部功能；RTL-SDR 插入 OTG 自动切换真硬件",
                 fontSize = 11.sp, color = Color(0xFF5A6B7F))
             Spacer(Modifier.height(6.dp))
@@ -204,7 +209,9 @@ fun SettingsPage(
                 Text("❓ 使用说明", fontSize = 12.sp)
             }
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
+        }
+        }
     }
 
     // ---- 对话框们（复用原有实现） ----

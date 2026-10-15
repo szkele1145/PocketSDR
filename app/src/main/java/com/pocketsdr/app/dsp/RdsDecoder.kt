@@ -8,7 +8,7 @@ import kotlin.math.sin
  *
  * 输入：MPX 复用信号（鉴频后），需 ≥256ksps（57kHz 载波奈奎斯特）。
  *
- * 级联：57k Costas 下变频 → 2.4k 低通 → 迟延乘积位同步 →
+ * 级联：57k Costas 下变频 → 两级 2.8k 低通 → Gardner 位同步 →
  * 差分双相解码 → 26 位块 CRC 锁定（A/B/C/D 序列）→ group 0A PS 电台名。
  */
 class RdsDecoder(private val fs: Float) {
@@ -19,13 +19,11 @@ class RdsDecoder(private val fs: Float) {
     private val loopLp = Biquad.Lowpass(800f, fs)
     private var loopInteg = 0.0
 
-    // ===== 基带 =====
-    private val dataLp = Biquad.Lowpass(2400f, fs)
-
-    // ===== 位同步（早晚门：额定 1187.5Hz 时钟 + 过零微调）=====
-    private val delayHalf = (fs / 2375f).toInt().coerceAtLeast(2)
-    private val delayBuf = FloatArray(delayHalf)
-    private var delayPos = 0
+    // ===== 基带：两级 2.8k 级联 =====
+    // 单级 2.4k 对 57k 残余镜像抑制不够，位流底噪偏高（真机表现为锁不住台名）；
+    // 与 DspVerify 里验证通过的链路保持一致：两级 2.8k、Q=0.7071。
+    private val dataLp = Biquad.Lowpass(2800f, fs)
+    private val dataLp2 = Biquad.Lowpass(2800f, fs)
 
     // ===== Gardner TED 位同步（2 倍过采样数字 PI 环，经 DspVerify 调参）=====
     private var clockVco = 0.0
@@ -61,8 +59,8 @@ class RdsDecoder(private val fs: Float) {
         val qBr = mpx * s
         val err = loopLp.process(iBr * qBr)
         loopInteg = loopInteg * 0.99999 - err * 2e-6
-        // 单级 2.4k 低通（双级联是模拟 PLL 时代遗留，Costas 环外一级足够）
-        val base = dataLp.process(iBr)
+        // 两级 2.8k 级联低通（与 DspVerify 验证链路一致）
+        val base = dataLp2.process(dataLp.process(iBr))
 
         // Gardner 位同步
         clockVco += clockVcoInc + gardnerTrim
@@ -124,35 +122,26 @@ class RdsDecoder(private val fs: Float) {
     }
 
     private fun decodeGroup(b: IntArray) {
-        if (((b[0] shr 12) and 0xF) != 0) return
+        // group type / version 在 B 块（b[1]）高 4 位——之前误取 A 块（PI 码高 4 位
+        // 基本不为 0），导致每个 group 都被这里 return 丢掉，台名永远锁不上。
+        if (((b[1] shr 12) and 0xF) != 0) return
+        // PS 字符在 D 块（IEC 62106）：0A/0B 的 C 块是 AF 替代频率表，不是字符。
+        // 段地址在 B 块低 2 位，段按 0→1→2→3 轮转，这里直接落位——不能做
+        // "同段连续两次相同"表决（下一段到来时 pending 已被覆盖）。
         val segment = b[1] and 0x3
-        val c1 = (b[2] shr 8) and 0xFF
-        val c2 = b[2] and 0xFF
-        val ch1 = if (c1 in 32..126) c1.toChar() else ' '
-        val ch2 = if (c2 in 32..126) c2.toChar() else ' '
-        // 段级双重确认：同段连续 2 次相同才接受（跨帧表决滤随机错）
-        if (pendingSeg == segment && pendingC1 == ch1 && pendingC2 == ch2) {
-            psChars[segment * 2] = ch1
-            psChars[segment * 2 + 1] = ch2
-            psSeen[segment] = true
-            pendingSeg = -1
-            if (psSeen.all { it }) {
-                val name = String(psChars).trim()
-                if (name.isNotEmpty() && name != stationName) {
-                    stationName = name
-                    dataLock = true
-                }
+        val c1 = (b[3] shr 8) and 0xFF
+        val c2 = b[3] and 0xFF
+        psChars[segment * 2] = if (c1 in 32..126) c1.toChar() else ' '
+        psChars[segment * 2 + 1] = if (c2 in 32..126) c2.toChar() else ' '
+        psSeen[segment] = true
+        if (psSeen.all { it }) {
+            val name = String(psChars).trim()
+            if (name.isNotEmpty() && name != stationName) {
+                stationName = name
+                dataLock = true
             }
-        } else {
-            pendingSeg = segment
-            pendingC1 = ch1
-            pendingC2 = ch2
         }
     }
-
-    private var pendingSeg = -1
-    private var pendingC1 = ' '
-    private var pendingC2 = ' '
 
     companion object {
         private const val TWO_PI = 2.0 * Math.PI
