@@ -43,7 +43,8 @@ fun SpectrumWaterfall(
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val image = remember(waterfall) { waterfall.bitmap.asImageBitmap() }
+    // 双缓冲：key 跟踪 bitmap 引用（发布交换后重组取新页）
+    val image = remember(waterfall.bitmap) { waterfall.bitmap.asImageBitmap() }
     val specColor = Color(0xFF00E5FF)
     val specFill = Color(0x3300E5FF)
     val markerColor = Color(0xFFFF5252)
