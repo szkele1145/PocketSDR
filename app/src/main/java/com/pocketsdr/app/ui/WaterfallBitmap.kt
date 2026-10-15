@@ -54,10 +54,10 @@ class WaterfallBitmap(
             val v = ((db[x] - dbMin) / range).coerceIn(0f, 1f)
             rowPixels[x] = lut[(v * 255f).toInt()]
         }
-        // 下移一行（row 1..rows-1 → 2..rows），新行写入 row 0
-        bitmap.getPixels(shiftBuf, 0, bins, 0, 1, bins, rows - 1)
-        bitmap.setPixels(shiftBuf, 0, bins, 0, 2, bins, rows - 1)
-        bitmap.setPixels(rowPixels, 0, bins, 0, 1, bins, 1)
+        // 下移一行：row 0..rows-2 → 1..rows-1，新行写入 row 0（最新在上）
+        bitmap.getPixels(shiftBuf, 0, bins, 0, 0, bins, rows - 1)
+        bitmap.setPixels(shiftBuf, 0, bins, 0, 1, bins, rows - 1)
+        bitmap.setPixels(rowPixels, 0, bins, 0, 0, bins, 1)
     }
 
     /** 清空（初始化为噪底色） */
