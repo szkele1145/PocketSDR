@@ -83,7 +83,13 @@ class MainActivity : ComponentActivity(), UiBridge {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        registerReceiver(usbReceiver, filter)
+        // Android 13+ 必须声明导出标志（USB 系统广播需要 EXPORTED），否则 SecurityException 闪退
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(usbReceiver, filter)
+        }
 
         startEngine()
         setContent { Host() }
