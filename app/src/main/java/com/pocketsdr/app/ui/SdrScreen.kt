@@ -425,6 +425,17 @@ fun SdrScreen(
                 if (mode == SdrEngine.Mode.WFM && stereoLock > 0.5f) {
                     Text("ST", color = Color(0xFF00E5FF), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
+                // 帮助（再看引导）+ 日志 两个摊开按钮
+                androidx.compose.material3.TextButton(
+                    onClick = { showOnboarding = true },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(28.dp)
+                ) { Text("❓", fontSize = 13.sp) }
+                androidx.compose.material3.TextButton(
+                    onClick = { showLog = true },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(28.dp)
+                ) { Text("日志", fontSize = 10.sp, color = Color(0xFF5A6B7F)) }
                 IconButton(onClick = onExit, modifier = Modifier.size(28.dp)) {
                     Icon(Icons.Filled.Close, "退出", tint = Color(0xFF5A6B7F))
                 }
