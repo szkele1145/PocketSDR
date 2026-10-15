@@ -33,12 +33,14 @@ class RxService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val freq = intent?.getLongExtra("freq", 0L) ?: 0L
         val mode = intent?.getStringExtra("mode") ?: "WFM"
+        val rdsName = intent?.getStringExtra("rds") ?: ""
         val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val text = if (freq > 0) "${"%.4f".format(freq / 1e6)} MHz · $mode" else "PocketSDR"
+        val freqText = if (freq > 0) "${"%.4f".format(freq / 1e6)} MHz · $mode" else "PocketSDR"
+        val text = if (rdsName.isNotEmpty()) "$rdsName · $freqText" else freqText
         val notif: Notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("PocketSDR")
             .setContentText(text)

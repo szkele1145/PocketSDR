@@ -85,12 +85,13 @@ fun SdrScreen(
         }
     }
 
-    // 调谐/模式变化 → 刷新前台服务通知
-    LaunchedEffect(tuned, mode) {
+    // 调谐/模式/RDS 变化 → 刷新前台服务通知
+    LaunchedEffect(tuned, mode, rdsName) {
         try {
             val intent = android.content.Intent(context, com.pocketsdr.app.RxService::class.java)
                 .putExtra("freq", tuned)
                 .putExtra("mode", mode.label)
+                .putExtra("rds", rdsName)
             // Android 12+ 后台启动前台服务受限——App 在前台时才刷新通知，失败静默
             try {
                 if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
