@@ -23,7 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import com.pocketsdr.app.source.rtl.RtlUsbSource
-import com.pocketsdr.app.ui.SdrScreen
+import com.pocketsdr.app.ui.AppShell
 
 /**
  * 主 Activity：USB 设备监听/权限 + 引擎持有 + DSP→UI 状态桥。
@@ -249,10 +249,10 @@ class MainActivity : ComponentActivity(), UiBridge {
     @Composable
     private fun Host() {
         val eng = engine
-        // 读 version 触发重组（Bitmap 内容变化）
+        // 读 version 触发重组（瀑布双缓冲发布）
         @Suppress("UNUSED_EXPRESSION") wfVersion
         if (engineReady && eng != null) {
-            SdrScreen(
+            AppShell(
                 engine = eng,
                 spectrum = eng.latestSpectrum,
                 waterfall = waterfallBmp,

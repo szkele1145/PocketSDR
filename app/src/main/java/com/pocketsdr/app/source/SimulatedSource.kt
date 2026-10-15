@@ -132,11 +132,12 @@ class SimulatedSource(
             for (st in inBand) {
                 st.audioPhase += st.audioRate
                 if (st.audioPhase > TWO_PI) st.audioPhase -= TWO_PI
+                // 音频用干净的亚 kHz 和弦（原 8-68kHz 混音砸进 19k 导频/RDS 频段 → 鉴频嘶嘶糊声）
                 val audio = when (st.type) {
-                    0 -> lutSin(st.audioPhase * 3.1) * 0.4 + lutSin(st.audioPhase * 1.7) * 0.3 +
-                        lutSin(st.audioPhase * 7.3) * 0.2 + lutSin(st.audioPhase * 13.7) * 0.1
-                    1 -> lutSin(st.audioPhase * 2.3) * 0.5 + lutSin(st.audioPhase * 5.1) * 0.3
-                    else -> lutSin(st.audioPhase * 2.7) * 0.6 + lutSin(st.audioPhase * 4.3) * 0.4
+                    0 -> lutSin(st.audioPhase) * 0.5 + lutSin(st.audioPhase * 2.0) * 0.3 +
+                        lutSin(st.audioPhase * 3.0) * 0.2          // WFM: 基音+八度+五度 (≈50-400Hz)
+                    1 -> lutSin(st.audioPhase * 2.0) * 0.6 + lutSin(st.audioPhase * 3.0) * 0.4  // NFM: 双音
+                    else -> lutSin(st.audioPhase * 1.5) * 0.6 + lutSin(st.audioPhase * 2.5) * 0.4  // AM/SSB
                 }
                 val instPhase: Double
                 val amp: Double
