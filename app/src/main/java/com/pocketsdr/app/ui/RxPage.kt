@@ -59,6 +59,9 @@ fun RxPage(
     var mode by remember { mutableStateOf(engine.mode) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
     var recording by remember { mutableStateOf(engine.isRecording) }
+    var showFreqInput by remember { mutableStateOf(false) }
+    var showFavorites by remember { mutableStateOf(false) }
+    val favorites by remember { mutableStateOf(store.getFavorites()) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
@@ -152,17 +155,40 @@ fun RxPage(
                 // 第一行：大频率 + 步进 + 音量
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            formatFreq(tuned),
-                            fontSize = 30.sp, fontWeight = FontWeight.Bold,
-                            color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
-                            maxLines = 1
-                        )
-                        Text(
-                            "${mode.label} · $status" + "  ${sMeter(signalDb)} ${signalDb.toInt()}dB",
-                            fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        Box(Modifier.clickable { showFreqInput = true }) {
+                            Column {
+                                Text(
+                                    formatFreq(tuned),
+                                    fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF00E5FF), fontFamily = FontFamily.Monospace,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    "${mode.label} · $status" + "  ${sMeter(signalDb)} ${signalDb.toInt()}dB",
+                                    fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                    // ★ 收藏台：主页一触即达，不翻设置页
+                    Surface(
+                        color = if (favorites.isNotEmpty()) Color(0xFF00E5FF) else Color(0xFF1A2230),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .widthIn(min = 56.dp)
+                            .clickable { showFavorites = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "★ ${favorites.size}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (favorites.isNotEmpty()) Color(0xFF06121A) else Color(0xFF8FA3B8),
+                                modifier = Modifier.padding(horizontal = 10.dp)
+                            )
+                        }
                     }
                     StepButtons(engine, mode) { tuned = engine.tunedFreq }
                     Spacer(Modifier.width(14.dp))
@@ -250,6 +276,20 @@ fun RxPage(
                         modifier = Modifier.padding(start = 4.dp).width(42.dp)
                     )
                 }
+            }
+            // 直接输入频率 / 收藏台弹窗（覆盖显示，不翻设置页）
+            if (showFreqInput) {
+                FreqInputDialog(engine, onDismiss = { showFreqInput = false })
+            }
+            if (showFavorites) {
+                FavoritesDialog(
+                    store,
+                    engine,
+                    favorites,
+                    onChange = {},
+                    onRename = { _, _ -> },
+                    onDismiss = { showFavorites = false }
+                )
             }
         }
     }
