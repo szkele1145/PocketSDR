@@ -68,6 +68,7 @@ fun RxPage(
         while (true) {
             tuned = engine.tunedFreq
             mode = engine.mode
+            recording = engine.isRecording
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
