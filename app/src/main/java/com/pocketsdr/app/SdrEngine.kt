@@ -145,6 +145,7 @@ class SdrEngine private constructor(
     // ---------- 静噪 ----------
     private var squelchOpen = false
     @Volatile var signalDb = -120f
+    private var signalDbSmooth = -120f   // 信号强度条 EMA 平滑，避免跳闪
     /** 立体声锁定强度 0..1（UI 显示 ST 指示） */
     val stereoLock: Float get() = stereo.stereoLock
 
@@ -463,7 +464,9 @@ class SdrEngine private constructor(
 
     private fun applySquelch(avgPower: Double) {
         val db = 10.0 * Math.log10(avgPower + 1e-12)
-        signalDb = db.toFloat()
+        // EMA 平滑（α=0.35），信号强度条不抖动；静噪决策仍用瞬时 db，保持灵敏
+        signalDbSmooth = 0.35f * db.toFloat() + 0.65f * signalDbSmooth
+        signalDb = signalDbSmooth
         if (squelchOpen) {
             // 已开：低于 阈值−3dB 才关（迟滞）
             if (db < squelchDb - 3.0) {

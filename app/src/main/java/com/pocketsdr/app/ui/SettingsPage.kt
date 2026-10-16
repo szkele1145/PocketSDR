@@ -40,7 +40,8 @@ fun SettingsPage(
     var showLog by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
     var showOnboarding by remember { mutableStateOf(false) }
-    var recording by remember { mutableStateOf(false) }
+    // 录音以 engine 为事实来源，与 RxPage 录音开关联动，不再维护孤立本地状态
+    val recording = engine.isRecording
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     var favorites by remember { mutableStateOf(store.getFavorites()) }
@@ -140,12 +141,12 @@ fun SettingsPage(
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = {
-                    if (recording) { engine.stopRecording(); recording = false }
-                    else recording = engine.startRecording(context)
+                    if (engine.isRecording) engine.stopRecording()
+                    else engine.startRecording(context)
                 },
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = if (recording) Color(0xFFFF4040) else Color(0xFF8FA3B8)),
-                    modifier = Modifier.weight(1f)) { Text(if (recording) "⏹ 停录" else "⏺ 录音", fontSize = 12.sp) }
+                        contentColor = if (engine.isRecording) Color(0xFFFF4040) else Color(0xFF8FA3B8)),
+                    modifier = Modifier.weight(1f)) { Text(if (engine.isRecording) "⏹ 停录" else "⏺ 录音", fontSize = 12.sp) }
                 OutlinedButton(onClick = { showRecordings = true },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF8FA3B8)),
                     modifier = Modifier.weight(1f)) { Text("☰ 录音列表", fontSize = 12.sp) }

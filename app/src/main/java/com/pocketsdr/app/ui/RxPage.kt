@@ -8,7 +8,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -55,6 +58,7 @@ fun RxPage(
     var volume by remember { mutableStateOf(engine.volume) }
     var mode by remember { mutableStateOf(engine.mode) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
+    var recording by remember { mutableStateOf(engine.isRecording) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
@@ -180,6 +184,41 @@ fun RxPage(
                         fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(start = 4.dp).width(34.dp)
                     )
+                    Spacer(Modifier.width(14.dp))
+                    // 录音开关：录音中红底高亮，一眼可见；未录音灰底。
+                    OutlinedButton(
+                        onClick = {
+                            if (recording) {
+                                engine.stopRecording()
+                                recording = false
+                            } else {
+                                val ok = engine.startRecording(context)
+                                if (ok) recording = true
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                        ),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Stop,
+                                contentDescription = if (recording) "停止录音" else "开始录音",
+                                tint = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                if (recording) "录音中" else "录音",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
+                    }
                 }
 
                 // 第二行：模式直选（横向排开，一点即换）+ 静噪
