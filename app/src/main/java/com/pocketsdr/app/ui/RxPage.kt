@@ -61,6 +61,7 @@ fun RxPage(
     var recording by remember { mutableStateOf(engine.isRecording) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
+    var showRecordings by remember { mutableStateOf(false) }
     val favorites by remember { mutableStateOf(store.getFavorites()) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
@@ -190,6 +191,24 @@ fun RxPage(
                             )
                         }
                     }
+                    // 录音文件：主页一触即达，播放/分享/删不翻页
+                    Surface(
+                        color = Color(0xFF1A2230),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .widthIn(min = 56.dp)
+                            .clickable { showRecordings = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Stop,
+                                contentDescription = "录音文件",
+                                tint = Color(0xFF00E5FF),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                     StepButtons(engine, mode) { tuned = engine.tunedFreq }
                     Spacer(Modifier.width(14.dp))
                     Text("🔊", fontSize = 15.sp)
@@ -290,6 +309,9 @@ fun RxPage(
                     onRename = { _, _ -> },
                     onDismiss = { showFavorites = false }
                 )
+            }
+            if (showRecordings) {
+                RecordingsDialog(onDismiss = { showRecordings = false })
             }
         }
     }
