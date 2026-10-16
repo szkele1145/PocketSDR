@@ -67,11 +67,34 @@ fun RxPage(
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
 
+    // 启动时恢复上次收听的频率与模式：打开即听，不必重新输入
+    var restored by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!restored) {
+            restored = true
+            val f = store.lastFreq
+            engine.tuneTo(f)
+            engine.selectMode(FreqStore.modeFromIndex(store.lastMode))
+            tuned = f
+            mode = FreqStore.modeFromIndex(store.lastMode)
+            center = engine.centerFreq
+        }
+    }
+
     // 引擎状态轮询同步（250ms 足够跟手，又不会给 UI 线程加压）
     LaunchedEffect(Unit) {
         while (true) {
-            tuned = engine.tunedFreq
-            mode = engine.mode
+            val newTuned = engine.tunedFreq
+            if (newTuned != tuned) {
+                tuned = newTuned
+                store.lastFreq = newTuned
+                store.lastCenter = engine.centerFreq
+            }
+            val newMode = engine.mode
+            if (newMode != mode) {
+                mode = newMode
+                store.lastMode = FreqStore.modeIndex(newMode)
+            }
             recording = engine.isRecording
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
