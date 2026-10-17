@@ -62,7 +62,8 @@ fun RxPage(
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
-    val favorites by remember { mutableStateOf(store.getFavorites()) }
+    // 收藏列表快照：弹窗里增删后必须回写这里，否则底部 ★ 角标和列表都不刷新
+    var favorites by remember { mutableStateOf(store.getFavorites()) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
@@ -195,6 +196,35 @@ fun RxPage(
                             }
                         }
                     }
+                    // ★ 一键收藏/取消：当前频率是否已收藏一眼可见，一点即切，不用进弹窗
+                    val isFav = favorites.any { it.freq == tuned }
+                    Surface(
+                        color = if (isFav) Color(0xFF00E5FF) else Color(0xFF1A2230),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .widthIn(min = 44.dp)
+                            .clickable {
+                                if (isFav) {
+                                    store.removeFavorite(tuned)
+                                } else {
+                                    store.addFavorite(FreqStore.Ch(
+                                        formatFreq(tuned), tuned,
+                                        FreqStore.modeIndex(mode)))
+                                }
+                                favorites = store.getFavorites()
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                if (isFav) "★" else "☆",
+                                fontSize = 18.sp,
+                                color = if (isFav) Color(0xFF06121A) else Color(0xFF8FA3B8),
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
                     // ★ 收藏台：主页一触即达，不翻设置页
                     Surface(
                         color = if (favorites.isNotEmpty()) Color(0xFF00E5FF) else Color(0xFF1A2230),
@@ -321,15 +351,23 @@ fun RxPage(
             }
             // 直接输入频率 / 收藏台弹窗（覆盖显示，不翻设置页）
             if (showFreqInput) {
-                FreqInputDialog(engine, onDismiss = { showFreqInput = false })
+                FreqInputDialog(
+                    engine, store,
+                    onDismiss = { showFreqInput = false },
+                    onAddFavorite = { showFavorites = true }
+                )
             }
             if (showFavorites) {
                 FavoritesDialog(
                     store,
                     engine,
                     favorites,
-                    onChange = {},
-                    onRename = { _, _ -> },
+                    // 增删/改名后立刻回读并回写快照，★ 角标与列表同步刷新
+                    onChange = { favorites = store.getFavorites() },
+                    onRename = { ch, n ->
+                        store.renameFavorite(ch.freq, n)
+                        favorites = store.getFavorites()
+                    },
                     onDismiss = { showFavorites = false }
                 )
             }

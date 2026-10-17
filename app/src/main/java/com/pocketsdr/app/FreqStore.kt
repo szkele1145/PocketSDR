@@ -9,6 +9,26 @@ import org.json.JSONArray
 class FreqStore(private val context: Context) {
 
     private val prefs by lazy { context.getSharedPreferences("pocketsdr", Context.MODE_PRIVATE) }
+    private val maxRecents = 8
+
+    /** 最近调谐过的频率（Hz，最近在前，去重），用于输入频率对话框的快捷跳台 */
+    fun getRecents(): MutableList<Long> {
+        val arr = prefs.getString("recents", null) ?: return mutableListOf()
+        return try {
+            val ja = JSONArray(arr)
+            MutableList(ja.length()) { i -> ja.getLong(i) }
+        } catch (_: Exception) { mutableListOf() }
+    }
+
+    fun addRecent(freqHz: Long) {
+        val l = getRecents()
+        l.removeAll { it == freqHz }
+        l.add(0, freqHz)
+        if (l.size > maxRecents) l.removeAt(l.size - 1)
+        val ja = JSONArray()
+        l.forEach { ja.put(it) }
+        prefs.edit().putString("recents", ja.toString()).apply()
+    }
 
     /** 上次收听状态 */
     var lastFreq: Long

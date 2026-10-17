@@ -217,9 +217,9 @@ fun SettingsPage(
 
     // ---- 对话框们（复用原有实现） ----
     if (showOnboarding) OnboardingDialog { showOnboarding = false }
-    if (showFreqInput) FreqInputDialog(engine) {
+    if (showFreqInput) FreqInputDialog(engine, store, onDismiss = {
         tuned = engine.tunedFreq; showFreqInput = false
-    }
+    })
     if (showFavorites) FavoritesDialog(store, engine, favorites,
         onChange = { favorites = store.getFavorites() },
         onRename = { ch, name -> store.renameFavorite(ch.freq, name); favorites = store.getFavorites() },

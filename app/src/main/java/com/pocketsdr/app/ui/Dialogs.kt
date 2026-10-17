@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -49,34 +50,61 @@ fun OnboardingDialog(onDismiss: () -> Unit) {
     )
 }
 
-/** 频率输入 */
+/** 频率输入（含最近频率快捷跳台 + 收藏当前） */
 @Composable
-fun FreqInputDialog(engine: SdrEngine, onDismiss: () -> Unit) {
+fun FreqInputDialog(
+    engine: SdrEngine,
+    store: FreqStore,
+    onDismiss: () -> Unit,
+    onAddFavorite: () -> Unit = {}
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val recents = remember { store.getRecents().toMutableList() }
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("输入频率 (MHz)") },
         text = {
-            OutlinedTextField(
-                value = text, onValueChange = { text = it },
-                placeholder = { Text("98.1") }, singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it },
+                    placeholder = { Text("98.1") }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                    )
                 )
-            )
+                if (recents.isNotEmpty()) {
+                    Text("最近", fontSize = 12.sp, color = Color(0xFF5A6B7F))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        recents.forEach { f ->
+                            TextButton(onClick = {
+                                text = "%.3f".format(f / 1_000_000f).trimEnd('0').trimEnd('.')
+                            }) { Text(formatFreq(f), fontSize = 12.sp) }
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = {
                 val n = text.trim().replace('．', '.').replace(',', '.').replace('。', '.')
                 n.toFloatOrNull()?.let { mhz ->
                     if (mhz in 0.1f..1800f) {
-                        engine.tuneTo((mhz * 1_000_000).toLong())
+                        val hz = (mhz * 1_000_000).toLong()
+                        engine.tuneTo(hz)
+                        store.addRecent(hz)
                     }
                 }
                 onDismiss()
             }) { Text("调谐") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onAddFavorite) { Text("★ 收藏当前") }
+            }
+        }
     )
 }
 
@@ -92,6 +120,7 @@ fun FavoritesDialog(
 ) {
     var renameTarget by remember { mutableStateOf<FreqStore.Ch?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<FreqStore.Ch?>(null) }
     var mode by remember { mutableStateOf(engine.mode) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
 
@@ -119,7 +148,7 @@ fun FavoritesDialog(
                             Icon(Icons.Filled.Edit, "改名", tint = Color(0xFF5A6B7F),
                                 modifier = Modifier.size(16.dp))
                         }
-                        IconButton(onClick = { store.removeFavorite(ch.freq); onChange() },
+                        IconButton(onClick = { deleteTarget = ch },
                             modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F),
                                 modifier = Modifier.size(16.dp))
@@ -156,6 +185,23 @@ fun FavoritesDialog(
                 }) { Text("保存") }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } }
+        )
+    }
+
+    // 删除二次确认：误触一下就把收藏删掉太容易了
+    deleteTarget?.let { t ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除收藏") },
+            text = { Text("确定删除「${t.name} · ${formatFreq(t.freq)}」？", fontSize = 13.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    store.removeFavorite(t.freq)
+                    onChange()
+                    deleteTarget = null
+                }) { Text("删除", color = Color(0xFFFF6B6B)) }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
         )
     }
 }

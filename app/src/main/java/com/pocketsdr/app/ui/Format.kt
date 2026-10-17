@@ -1,7 +1,7 @@
 package com.pocketsdr.app.ui
 
 /** 频率格式化（公共工具） */
-internal fun formatFreq(f: Long): String {
+fun formatFreq(f: Long): String {
     val m = f / 1e6
     return if (f % 1_000_000 == 0L) "%.0f MHz".format(m) else "%.4f MHz".format(m)
 }
