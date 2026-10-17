@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FreqStore
@@ -401,17 +400,20 @@ private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 步进按钮对（模式自适应步长；轻点走一步，按住连跳，松手即停） */
+/** 步进按钮对（默认随模式自适应；轻点步进标签可循环切换步长，按住连跳，松手即停） */
 @Composable
 private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> Unit) {
-    val step = remember(mode) {
-        when (mode) {
-            SdrEngine.Mode.WFM -> 100_000L
-            SdrEngine.Mode.NFM -> 12_500L
-            SdrEngine.Mode.AM -> 25_000L
-            else -> 100L
-        }
+    // 可选步长表：覆盖广播/业余常用信道间隔，点一下换一档
+    val steps = listOf(1_000L, 5_000L, 9_000L, 10_000L, 12_500L, 25_000L, 50_000L, 100_000L, 1_000_000L)
+    fun defaultIndex(m: SdrEngine.Mode): Int = when (m) {
+        SdrEngine.Mode.WFM -> steps.indexOf(100_000L)
+        SdrEngine.Mode.NFM -> steps.indexOf(12_500L)
+        SdrEngine.Mode.AM -> steps.indexOf(25_000L)
+        else -> steps.indexOf(1_000L)
     }
+    // 模式切换时回到该模式默认档；用户手动选过的档位在换模式后重置
+    var stepIndex by remember(mode) { mutableStateOf(defaultIndex(mode)) }
+    val step = steps[stepIndex]
     val stepLabel = when {
         step >= 1_000_000 -> "%.1fM".format(step / 1e6)
         step >= 1_000 -> if (step % 1_000 == 0L) "${step / 1_000}k" else "%.1fk".format(step / 1e3)
@@ -419,12 +421,19 @@ private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> 
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         StepArrow(up = false, step = step, engine = engine, onTuned = onTuned)
-        Text(
-            stepLabel, fontSize = 10.sp, color = Color(0xFF5A6B7F),
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.width(42.dp),
-            textAlign = TextAlign.Center
-        )
+        // 步长标签本身就是切换按钮：点一下进一档（循环），不必去设置页翻
+        Surface(
+            color = Color(0xFF1A2230),
+            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier
+                .clickable { stepIndex = (stepIndex + 1) % steps.size }
+        ) {
+            Text(
+                stepLabel, fontSize = 10.sp, color = Color(0xFF00E5FF),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+            )
+        }
         StepArrow(up = true, step = step, engine = engine, onTuned = onTuned)
     }
 }
