@@ -143,6 +143,8 @@ class MainActivity : ComponentActivity(), UiBridge {
     }
 
     private fun maybeRequestPermission(device: UsbDevice) {
+        // 插 U 盘/键鼠也会收到 ATTACHED 广播，非 SDR 设备不弹授权框
+        if (!isRtlDevice(device)) return
         if (usbManager.hasPermission(device)) {
             switchToHardware(device)
             return
@@ -157,12 +159,18 @@ class MainActivity : ComponentActivity(), UiBridge {
 
     /** 切到真实硬件（USB 权限已授予） */
     private fun switchToHardware(device: UsbDevice, centerHint: Long = 98_000_000, tuneHint: Long = 98_100_000) {
+        val conn = try {
+            usbManager.openDevice(device)
+        } catch (e: Exception) {
+            pushStatus("USB 打开异常: ${e.message?.take(50)}")
+            null
+        }
+        if (conn == null) {
+            pushStatus("USB 打开失败（设备忙？拔插一次或关掉其它 SDR 应用）")
+            return
+        }
+        var src: RtlUsbSource? = null
         try {
-            val conn = usbManager.openDevice(device)
-            if (conn == null) {
-                pushStatus("USB 打开失败（设备忙？）")
-                return
-            }
             // 先停旧引擎（释放 AudioTrack/停止推 UiBridge），再起新的——避免双 DSP 线程并发
             engine?.let { old ->
                 engine = null
@@ -170,7 +178,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 old.close()
             }
             val store = com.pocketsdr.app.FreqStore(this)
-            val src = RtlUsbSource(conn, device, 1_024_000L)
+            src = RtlUsbSource(conn, device, 1_024_000L)
             engine = SdrEngine.withSource(src, this).also {
                 it.start()
                 it.tuneTo(tuneHint)
@@ -179,7 +187,10 @@ class MainActivity : ComponentActivity(), UiBridge {
             }
             pushStatus("RTL-SDR 已连接 · FC0013")
         } catch (e: Exception) {
+            // 关键：初始化失败必须归还 USB 连接，否则后续重试全部「设备忙」，只能重启应用
             pushStatus("硬件初始化失败: ${e.message?.take(60)}")
+            try { src?.close() } catch (_: Exception) {}
+            try { conn.close() } catch (_: Exception) {}
             switchToSimulated()
         }
     }
@@ -241,9 +252,12 @@ class MainActivity : ComponentActivity(), UiBridge {
         eng.volume = store.lastVolume
     }
 
-    private fun isRtlDevice(d: UsbDevice): Boolean =
-        (d.vendorId == 0x0bda && (d.productId == 0x2832 || d.productId == 0x2838)) ||
-        (d.vendorId == 0x0413 && d.productId == 0x6680)
+    /** 必须与 res/xml/device_filter.xml 的列表完全一致，否则会出现「自动拉起应用却不认设备」 */
+    private fun isRtlDevice(d: UsbDevice): Boolean = when (d.vendorId) {
+        0x0bda -> d.productId == 0x2832 || d.productId == 0x2838 || d.productId == 0x2831
+        0x0413 -> d.productId == 0x6680
+        else -> false
+    }
 
     // ---------- Compose ----------
     @Composable

@@ -56,6 +56,9 @@ class RtlUsbSource(
         checkNotNull(ep) { "未找到 bulk-in 端点" }
         val claimOk = conn.claimInterface(iface, true)
         SdrLog.i("USB", "claim 接口0: $claimOk (false=被内核驱动占用)")
+        // claim 失败绝不能继续：后续 I2C/批量传输会全部超时，
+        // 用户看到的却是「OTG 线/供电问题」，排查方向完全被带偏。
+        check(claimOk) { "USB 接口被内核驱动占用（无法 claim），换一台设备或关闭其它占用 USB 的应用" }
         rtl = Rtl2832(conn, ep)
         check(rtl.initBaseband()) { "RTL2832 基带初始化失败" }
         SdrLog.i("RTL", "基带初始化 OK")
