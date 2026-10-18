@@ -68,10 +68,27 @@ fun ScanDialog(
                         color = Color(0xFF00E5FF)
                     )
                 }
-                scanFound.take(12).forEach { st ->
-                    TextButton(onClick = {
-                        engine.tuneTo(st.freq); onDismiss()
-                    }) { Text("${formatFreq(st.freq)}   ${st.levelDb.toInt()}dB", fontSize = 14.sp) }
+                if (scanFound.isEmpty()) {
+                    Text("尚未找到电台。点右下角「开始扫描」，约 20 秒。", fontSize = 13.sp,
+                        color = Color(0xFF5A6B7F))
+                } else {
+                    // 高度受限 + 可滚动：扫出 20 个台也不会把对话框顶出屏幕
+                    LazyColumn(Modifier.height(300.dp).fillMaxWidth()) {
+                        items(scanFound, key = { it.freq }) { st ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = {
+                                    engine.tuneTo(st.freq); onDismiss()
+                                }) { Text(formatFreq(st.freq), fontSize = 14.sp) }
+                                Text("${st.levelDb.toInt()}dB", fontSize = 11.sp,
+                                    color = Color(0xFF5A6B7F), modifier = Modifier.weight(1f))
+                                val saved = remember(st.freq) {
+                                    store.getFavorites().any { it.freq == st.freq }
+                                }
+                                Text(if (saved) "★" else "", fontSize = 14.sp,
+                                    color = Color(0xFF00E5FF))
+                            }
+                        }
+                    }
                 }
             }
         },
