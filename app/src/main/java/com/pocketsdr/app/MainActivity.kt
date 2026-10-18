@@ -127,7 +127,9 @@ class MainActivity : ComponentActivity(), UiBridge {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     val d = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    if (d != null) maybeRequestPermission(d)
+                    // 插 U 盘/键鼠也会收到 ATTACHED 广播，非 SDR 设备不弹授权框。
+                    // 白名单外的设备（非官方棒子）可在设置页用「USB 诊断」强制连接。
+                    if (d != null && isRtlDevice(d)) maybeRequestPermission(d)
                 }
                 ACTION_USB_PERMISSION -> {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
@@ -142,9 +144,8 @@ class MainActivity : ComponentActivity(), UiBridge {
         }
     }
 
-    private fun maybeRequestPermission(device: UsbDevice) {
-        // 插 U 盘/键鼠也会收到 ATTACHED 广播，非 SDR 设备不弹授权框
-        if (!isRtlDevice(device)) return
+    /** 请求授权；已授权则直接上硬件。调用方负责决定要不要对白名单外的设备也开放 */
+    internal fun maybeRequestPermission(device: UsbDevice) {
         if (usbManager.hasPermission(device)) {
             switchToHardware(device)
             return
@@ -155,6 +156,16 @@ class MainActivity : ComponentActivity(), UiBridge {
             PendingIntent.FLAG_MUTABLE
         )
         usbManager.requestPermission(device, pi)
+    }
+
+    /**
+     * 白名单外设备的强制连接入口（USB 诊断面板用）。
+     * 非官方棒子的 VID/PID 千奇百怪，只要底层真是 RTL2832+FC0013 就该给机会连上。
+     * 未授权时先走系统授权弹窗（结果仍从 ACTION_USB_PERMISSION 广播回来）。
+     */
+    internal fun forceConnect(device: UsbDevice) {
+        SdrLog.i("USB", "强制尝试 vid=%04X pid=%04X".format(device.vendorId, device.productId))
+        maybeRequestPermission(device)
     }
 
     /** 切到真实硬件（USB 权限已授予） */
@@ -252,12 +263,9 @@ class MainActivity : ComponentActivity(), UiBridge {
         eng.volume = store.lastVolume
     }
 
-    /** 必须与 res/xml/device_filter.xml 的列表完全一致，否则会出现「自动拉起应用却不认设备」 */
-    private fun isRtlDevice(d: UsbDevice): Boolean = when (d.vendorId) {
-        0x0bda -> d.productId == 0x2832 || d.productId == 0x2838 || d.productId == 0x2831
-        0x0413 -> d.productId == 0x6680
-        else -> false
-    }
+    /** 白名单判定统一收口到 UsbDiag（与 device_filter.xml 对齐） */
+    private fun isRtlDevice(d: UsbDevice): Boolean =
+        com.pocketsdr.app.UsbDiag.isKnown(d.vendorId, d.productId)
 
     // ---------- Compose ----------
     @Composable

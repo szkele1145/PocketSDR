@@ -199,6 +199,11 @@ fun SettingsPage(
             }
         }
 
+        // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
+        GroupCard("USB 诊断") {
+            UsbDiagCard()
+        }
+
         // ===== 关于 =====
         GroupCard("关于") {
             Text("PocketSDR · RTL-SDR 横屏收音机", fontSize = 12.sp, color = Color(0xFF8FA3B8))
@@ -231,8 +236,66 @@ fun SettingsPage(
     if (showRecordings) RecordingsDialog { showRecordings = false }
 }
 
-/** 分组卡片容器 */
+/**
+ * USB 诊断卡：列出系统枚举到的所有 USB 设备（VID/PID、授权、bulk-in）。
+ * 非官方棒子的 PID 落在白名单外时，这里是唯一的排查与自救入口。
+ */
 @Composable
+fun UsbDiagCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var entries by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(listOf<com.pocketsdr.app.UsbDiag.Entry>()) }
+    val refresh: () -> Unit = {
+        val usb = context.getSystemService(android.content.Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+        if (usb != null) entries = com.pocketsdr.app.UsbDiag.snapshot(usb)
+    }
+    // 打开设置页时刷新一次（进入页面必然重组，插拔后重进即可）
+    androidx.compose.runtime.LaunchedEffect(Unit) { refresh() }
+    Column(Modifier.fillMaxWidth()) {
+        if (entries.isEmpty()) {
+            Text("未检测到 USB 设备（插上 OTG 后回到此页）", fontSize = 11.sp, color = Color(0xFF5A6B7F))
+        } else {
+            entries.forEach { e ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                ) {
+                    Text(
+                        "${e.id} ${if (e.bulkIn) "·SDR?" else "·非SDR"}",
+                        fontSize = 11.sp,
+                        color = if (e.known) Color(0xFF00E5FF) else Color(0xFF8FA3B8),
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (!e.granted) {
+                        Text("未授权", fontSize = 10.sp, color = Color(0xFF5A6B7F))
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            val act = context as? com.pocketsdr.app.MainActivity
+                            val usb = context.getSystemService(android.content.Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+                            val dev = if (usb != null) com.pocketsdr.app.UsbDiag.find(usb, e.vid, e.pid) else null
+                            if (act != null && dev != null) act.forceConnect(dev)
+                            refresh()
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (e.known) Color(0xFF00E5FF) else Color(0xFFF6D55C)
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(if (e.known) "连接" else "强制尝试", fontSize = 10.sp)
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("提示：识别不了的棒子点「强制尝试」，仍失败请把上面的 VID:PID 抄下来反馈",
+                fontSize = 10.sp, color = Color(0xFF5A6B7F))
+        }
+    }
+}
+
+/** 分组卡片容器 */@Composable
 private fun GroupCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Surface(
         color = Color(0xFF111826),
