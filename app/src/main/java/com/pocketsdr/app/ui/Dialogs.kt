@@ -29,6 +29,18 @@ import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FreqStore
 import com.pocketsdr.app.SdrEngine
 
+/** 常用频段预设：点一下就跳过去，模式一并切好 */
+data class PresetBand(val name: String, val freqHz: Long, val mode: SdrEngine.Mode)
+
+val PresetBands = listOf(
+    PresetBand("FM 广播", 98_000_000L, SdrEngine.Mode.WFM),
+    PresetBand("航空对讲", 121_500_000L, SdrEngine.Mode.AM),
+    PresetBand("业余无线电 2m", 144_000_000L, SdrEngine.Mode.NFM),
+    PresetBand("对讲机 UHF", 446_000_000L, SdrEngine.Mode.NFM),
+    PresetBand("短波 7MHz", 7_074_000L, SdrEngine.Mode.USB),
+    PresetBand("短波 3.5MHz", 3_573_000L, SdrEngine.Mode.LSB)
+)
+
 /** 新手引导 */
 @Composable
 fun OnboardingDialog(onDismiss: () -> Unit) {
@@ -80,6 +92,28 @@ fun FreqInputDialog(
                             TextButton(onClick = {
                                 text = "%.3f".format(f / 1_000_000f).trimEnd('0').trimEnd('.')
                             }) { Text(formatFreq(f), fontSize = 12.sp) }
+                        }
+                    }
+                }
+                // 常用频段：一点即跳，模式自动切换（用户不用先懂 AM/NFM/WFM 的区别）
+                Text("常用频段", fontSize = 12.sp, color = Color(0xFF5A6B7F))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    PresetBands.forEach { p ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = {
+                                    engine.tuneTo(p.freqHz)
+                                    engine.selectMode(p.mode)
+                                    store.addRecent(p.freqHz)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(p.name, fontSize = 12.sp, color = Color(0xFF00E5FF))
+                            }
+                            Text(formatFreq(p.freqHz), fontSize = 11.sp,
+                                color = Color(0xFF8FA3B8),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                         }
                     }
                 }
