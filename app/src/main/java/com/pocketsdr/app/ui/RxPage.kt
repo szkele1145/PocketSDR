@@ -133,7 +133,7 @@ fun RxPage(
                 tunedFreq = tuned,
                 span = viewSpan,
                 fullSpan = engine.sampleRate.toLong(),
-                dbMin = -90f, dbMax = 0f,
+                dbMin = -100f, dbMax = 0f,
                 onTune = { f ->
                     engine.tuneWithinSpan(f)
                     tuned = engine.tunedFreq
