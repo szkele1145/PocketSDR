@@ -255,23 +255,19 @@ fun RxPage(
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
                                 )
-                                // 信号质量结论：S 表数字对新手不直观，直接说人话
+                                // 信号质量结论（人话）与 USB 警告共占一行：USB 异常优先显示，
+                                // 质量结论常驻；避免三行小字挤占横屏纵向空间
                                 Text(
-                                    signalQualityText(signalDb, squelchOpen, squelch),
+                                    usbWarn ?: signalQualityText(signalDb, squelchOpen, squelch),
                                     fontSize = 10.sp,
                                     color = when {
+                                        usbWarn != null -> Color(0xFFFF6B6B)
                                         squelchOpen && signalDb >= -45f -> Color(0xFF7DF3FF)
                                         squelchOpen -> Color(0xFF00E5FF)
                                         else -> Color(0xFF5A6B7F)
                                     },
                                     maxLines = 1
                                 )
-                                // USB 供电/线材异常直接亮在主界面：真机最常见的翻车原因，
-                                // 只写进 logcat 等于让用户瞎猜「是不是软件坏了」
-                                if (usbWarn != null) {
-                                    Text("⚠ $usbWarn", fontSize = 10.sp,
-                                        color = Color(0xFFFF6B6B), maxLines = 1)
-                                }
                             }
                         }
                     }
@@ -342,7 +338,7 @@ fun RxPage(
                         }
                     }
                     StepButtons(engine, mode) { tuned = engine.tunedFreq }
-                    Text("🔊", fontSize = 15.sp)
+                    Text("音量", fontSize = 11.sp, color = Color(0xFF5A6B7F))
                     Slider(
                         value = volume,
                         onValueChange = { volume = it; engine.volume = it },
@@ -358,23 +354,12 @@ fun RxPage(
                     )
                     Text(
                         "${(volume * 100).toInt()}%",
-                        fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = if (muted) Color(0xFF5A6B7F) else Color(0xFF8FA3B8),
+                        fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(start = 4.dp).width(34.dp)
                     )
                     // 静音开关：SDR 时想临时静音又不想关录音/断流，直接点
-                    OutlinedButton(
-                        onClick = { engine.muted = !engine.muted; muted = engine.muted },
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8)),
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
-                    ) {
-                        Text(if (muted) "🔇 静音中" else "🔊 静音", fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8))
-                    }
-                    Spacer(Modifier.width(14.dp))
                     OutlinedButton(
                         onClick = { engine.muted = !engine.muted; muted = engine.muted },
                         modifier = Modifier.padding(horizontal = 4.dp),
