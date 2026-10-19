@@ -50,6 +50,9 @@ fun ScanDialog(
 ) {
     val context = LocalContext.current
     val store = remember { com.pocketsdr.app.FreqStore(context) }
+    // 扫描器实例保留，用于读回实测噪声底（判断灵敏度/是否搜得到台）
+    var scanner by remember { mutableStateOf<com.pocketsdr.app.FmScanner?>(null) }
+    var floorDb by remember { mutableStateOf<Float?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (scanProgress in 0..100) "搜索中… $scanProgress% (${scanFound.size} 台)"
@@ -67,6 +70,11 @@ fun ScanDialog(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         color = Color(0xFF00E5FF)
                     )
+                }
+                // 实测噪声底：真机搜不到台时，这一行能直接说明是"信号太弱"还是"阈值不对"
+                floorDb?.let { fl ->
+                    Text("实测噪声底 ${"%.1f".format(fl)}dB · 门限 ${"%.1f".format(fl + 8f)}dB",
+                        fontSize = 11.sp, color = Color(0xFF5A6B7F))
                 }
                 if (scanFound.isEmpty()) {
                     Text("尚未找到电台。点右下角「开始扫描」，约 20 秒。", fontSize = 13.sp,
@@ -97,12 +105,16 @@ fun ScanDialog(
                 if (scanProgress !in 0..100) {
                     onProgress(0)
                     onFound(emptyList())
-                    FmScanner(engine,
+                    floorDb = null
+                    val sc = FmScanner(engine,
                         onProgress = { p, _ -> onProgress(p) },
                         onDone = { stations ->
                             onFound(stations.sortedByDescending { it.levelDb })
+                            floorDb = scanner?.noiseFloorDb
                             onProgress(101)
-                        }).scan(87_500_000, 108_000_000)
+                        })
+                    scanner = sc
+                    sc.scan(87_500_000, 108_000_000)
                 }
             }) { Text(if (scanProgress !in 0..100) "开始扫描" else "扫描中…") }
         },
