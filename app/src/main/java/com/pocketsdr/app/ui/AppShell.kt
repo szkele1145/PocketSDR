@@ -49,6 +49,7 @@ fun AppShell(
     signalDb: Float,
     stereoLock: Float,
     rdsName: String,
+    rdsLocked: Boolean = false,
     onExit: () -> Unit
 ) {
     var page by remember { mutableStateOf(0) }
@@ -68,7 +69,8 @@ fun AppShell(
                         status = status,
                         signalDb = signalDb,
                         stereoLock = stereoLock,
-                        rdsName = rdsName
+                        rdsName = rdsName,
+                        rdsLocked = rdsLocked
                     )
                     1 -> SettingsPage(engine, status, onExit = onExit)
                 }

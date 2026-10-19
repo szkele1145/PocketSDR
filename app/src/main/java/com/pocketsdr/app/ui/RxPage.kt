@@ -50,6 +50,7 @@ fun RxPage(
     signalDb: Float,
     stereoLock: Float,
     rdsName: String,
+    rdsLocked: Boolean = false,
     onExit: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -198,15 +199,25 @@ fun RxPage(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            // RDS 电台名（锁定后左上角）
-            if (mode == SdrEngine.Mode.WFM && rdsName.isNotEmpty()) {
+            // RDS 电台名（锁定后左上角）+ 立体声/单声道指示
+            if (mode == SdrEngine.Mode.WFM) {
+                val label = when {
+                    rdsName.isNotEmpty() -> "📻 $rdsName"
+                    rdsLocked -> "📻 RDS 同步·读台名中"
+                    else -> "📻 RDS 搜索中…"
+                }
                 Surface(
                     color = Color(0xCC101826), shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
                 ) {
                     Text(
-                        "📻 $rdsName" + if (stereoLock > 0.5f) " ·ST" else "",
-                        color = Color(0xFF7DF3FF), fontSize = 12.sp,
+                        label + if (stereoLock > 0.5f) " ·ST" else " ·单声道",
+                        color = when {
+                            rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
+                            rdsLocked -> Color(0xFF00E5FF)
+                            else -> Color(0xFF5A6B7F)
+                        },
+                        fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )

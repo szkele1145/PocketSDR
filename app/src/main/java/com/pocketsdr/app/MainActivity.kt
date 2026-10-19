@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var signalDb by mutableStateOf(-120f)
     private var stereoLock by mutableStateOf(0f)
     private var rdsName by mutableStateOf("")
+    /** RDS 是否已位同步（还没解出台名时，用于告诉用户"正在等"而不是"坏了"） */
+    private var rdsLocked by mutableStateOf(false)
     private var engineReady by mutableStateOf(false)
 
     // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
@@ -58,6 +60,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 signalDb = engine?.signalDb ?: -120f
                 stereoLock = engine?.stereoLock ?: 0f
                 rdsName = engine?.rds?.stationName ?: ""
+                rdsLocked = engine?.rds?.dataLock ?: false
             }
         }
     }
@@ -288,6 +291,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 signalDb = signalDb,
                 stereoLock = stereoLock,
                 rdsName = rdsName,
+                rdsLocked = rdsLocked,
                 onExit = { finish() }
             )
         } else {
