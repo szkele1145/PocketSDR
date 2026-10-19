@@ -196,6 +196,25 @@ fun SettingsPage(
                     Text("%.3fM".format(engine.sampleRate / 1e6), fontSize = 11.sp,
                         color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace)
                 }
+                // PPM 频率校准：晶振偏几十 ppm 就会让窄带信号完全跑掉
+                var ppm by remember { mutableStateOf(engine.hardwarePpm.toFloat()) }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("频率校准", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                    Slider(
+                        value = ppm,
+                        onValueChange = {
+                            ppm = it
+                            engine.setHardwarePpm(Math.round(it))
+                        },
+                        valueRange = -100f..100f,
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(thumbColor = Color(0xFFF6D55C))
+                    )
+                    Text("%+.0f ppm".format(ppm), fontSize = 11.sp,
+                        color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
+                }
+                Text("听到的信号比实际频率偏低（听不清）就往正调，偏高往负调。一次标定全频段通用。",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
             }
         }
 

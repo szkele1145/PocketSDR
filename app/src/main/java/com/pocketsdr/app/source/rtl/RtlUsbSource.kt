@@ -193,6 +193,41 @@ class RtlUsbSource(
         return ok
     }
 
+    // ---------- 频率校准（PPM）----------
+    /**
+     * 晶振误差补偿。FC0013 这类廉价棒子的 28.8MHz 晶振常偏几十 ppm，
+     * 直接后果是「明明调到 98.1MHz 却听不清」——广播有 200kHz 带宽兜着，
+     * 窄带 NFM/SSB 就完全跑掉了。
+     *
+     * 改 xtal 会同时影响采样率与 PLL 分频，所以必须重算采样率并重新调谐。
+     * 用 PPM 而不是直接写 Hz：ppm 与中心频率无关，一次标定全频段通用。
+     */
+    @Volatile var ppm: Int = 0
+        private set
+
+    /** 设置 PPM 校准（-200..200），返回是否生效 */
+    fun setPpm(value: Int): Boolean {
+        if (closed) return false
+        val v = value.coerceIn(-200, 200)
+        ppm = v
+        return try {
+            rtl.setI2cRepeater(false)
+            rtl.setXtalHz(Rtl2832.DEFAULT_XTAL + (Rtl2832.DEFAULT_XTAL * v / 1_000_000L))
+            // xtal 变了 → 采样率寄存器过时，必须重算；重算会软复位，需再复位端点
+            val real = rtl.setSampleRate(sampleRate.toLong())
+            rtl.resetBuffer()
+            retune()
+            SdrLog.i("RTL", "PPM=$v 校准后采样率=$real")
+            true
+        } catch (e: Exception) {
+            SdrLog.e("RTL", "PPM 校准失败: ${e.message?.take(40)}")
+            false
+        }
+    }
+
+    /** 当前生效的晶振频率（Hz），调试用 */
+    val xtalHz: Long get() = rtl.rtlXtal
+
     // ---------- 直接采样模式（HF 短波）----------
     @Volatile var directSampling = 0
         private set

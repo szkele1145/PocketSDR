@@ -66,6 +66,16 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
     var rtlXtal = DEFAULT_XTAL
         private set
 
+    /**
+     * 设置晶振频率（ppm 校准用）。只改数值，采样率/PLL 由调用方重算。
+     * 值域限制在 ±200ppm，防止滑条抖动或非法输入把 PLL 推到无意义的分频。
+     */
+    fun setXtalHz(hz: Long) {
+        val lo = DEFAULT_XTAL - DEFAULT_XTAL / 5000   // -200ppm
+        val hi = DEFAULT_XTAL + DEFAULT_XTAL / 5000   // +200ppm
+        rtlXtal = hz.coerceIn(lo, hi)
+    }
+
     /** demod 写后固定回读一次（librtlsdr 行为，保证时序） */
     private var lastError = 0
 

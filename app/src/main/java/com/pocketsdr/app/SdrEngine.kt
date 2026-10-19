@@ -69,6 +69,18 @@ class SdrEngine private constructor(
         val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
         return src.setRtlAgc(on)
     }
+
+    /** 频率校准 PPM（晶振误差补偿），仿真源 no-op */
+    fun setHardwarePpm(ppm: Int): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
+        val ok = src.setPpm(ppm)
+        if (ok) pendingReset = true
+        return ok
+    }
+
+    /** 当前生效的 PPM */
+    val hardwarePpm: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.ppm ?: 0
     enum class Mode(val label: String) { WFM("WFM"), NFM("NFM"), AM("AM"), USB("USB"), LSB("LSB") }
 
     // ---------- UI 可写状态 ----------
