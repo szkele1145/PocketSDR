@@ -22,6 +22,15 @@ class RtlUsbSource(
 
     override val isReal = true
 
+    /** 探测到的 tuner 名称（FC0013 / R820T / UNKNOWN），供自检报告展示 */
+    val tunerName: String get() = tunerType.name
+
+    /** USB 设备标识：VID:PID + 产品名，自检报告用 */
+    val usbDeviceInfo: String
+        get() = "VID=%04X PID=%04X %s".format(
+            device.vendorId, device.productId,
+            runCatching { device.productName ?: "?" }.getOrDefault("?"))
+
     private val rtl: Rtl2832
     private var tuner: Fc0013? = null
     private val tunerType: RtlTuner

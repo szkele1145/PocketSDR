@@ -40,6 +40,8 @@ fun SettingsPage(
     var showLog by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
     var showOnboarding by remember { mutableStateOf(false) }
+    // 自检报告是否已复制到剪贴板
+    var copied by remember { mutableStateOf(false) }
     // 录音以 engine 为事实来源，与 RxPage 录音开关联动，不再维护孤立本地状态
     val recording = engine.isRecording
     var scanProgress by remember { mutableStateOf(-1) }
@@ -283,9 +285,32 @@ fun SettingsPage(
             Text("仿真模式可无硬件体验全部功能；RTL-SDR 插入 OTG 自动切换真硬件",
                 fontSize = 11.sp, color = Color(0xFF5A6B7F))
             Spacer(Modifier.height(6.dp))
-            OutlinedButton(onClick = { showOnboarding = true },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF))) {
-                Text("❓ 使用说明", fontSize = 12.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { showOnboarding = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
+                    modifier = Modifier.weight(1f)) {
+                    Text("❓ 使用说明", fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(6.dp))
+                // 一键自检报告：出问题时用户不用翻 logcat，复制一段文本即可定位
+                OutlinedButton(onClick = {
+                    val ver = runCatching {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                    }.getOrNull() ?: "?"
+                    val txt = engine?.selfCheckReport(ver) ?: "引擎未就绪"
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("PocketSDR 自检", txt))
+                    copied = true
+                },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = if (copied) Color(0xFF7DF3FF) else Color(0xFF8FA3B8)),
+                    modifier = Modifier.weight(1f)) {
+                    Text(if (copied) "✓ 已复制" else "📋 自检报告", fontSize = 12.sp)
+                }
+            }
+            if (copied) {
+                Text("已复制到剪贴板，粘贴给我即可排查。", fontSize = 10.sp, color = Color(0xFF5A6B7F))
             }
         }
         Spacer(Modifier.height(12.dp))

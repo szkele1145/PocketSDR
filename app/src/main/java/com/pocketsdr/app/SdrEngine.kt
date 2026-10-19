@@ -247,6 +247,53 @@ class SdrEngine private constructor(
     val usbResets: Int
         get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.totalResets ?: 0
 
+    /**
+     * 生成一份纯文本自检报告。
+     *
+     * 目的：真机出问题时用户不必去翻 logcat（大部分人不会），一段可复制的文本
+     * 就能定位「认到设备了吗 / 有数据流吗 / 噪声底正常吗 / 有没有读超时」。
+     */
+    fun selfCheckReport(appVersion: String): String {
+        val rtl = source as? com.pocketsdr.app.source.rtl.RtlUsbSource
+        val idle = dataIdleMs()
+        val sb = StringBuilder()
+        sb.append("=== PocketSDR 自检报告 ===\n")
+        sb.append("版本：$appVersion\n")
+        sb.append("时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date())}\n")
+        sb.append("源码：\n")
+        sb.append("  数据源：").append(if (isRealSource) "真机 RTL-SDR" else "仿真模式").append('\n')
+        if (rtl != null) {
+            sb.append("  USB：").append(rtl.usbDeviceInfo).append('\n')
+            sb.append("  tuner：").append(rtl.tunerName).append('\n')
+            sb.append("  直接采样：").append(
+                when (hardwareDirectSampling) { 1 -> "I-ADC"; 2 -> "Q-ADC"; else -> "关" }).append('\n')
+        }
+        sb.append("  采样率：").append("%.3f MHz".format(sampleRate / 1e6)).append('\n')
+        sb.append("  中心频率：").append("%.6f MHz".format(centerFreq / 1e6)).append('\n')
+        sb.append("  当前频点：").append("%.6f MHz".format(tunedFreq / 1e6)).append('\n')
+        sb.append("  模式：").append(mode.label).append('\n')
+        sb.append("  PPM 校准：").append(hardwarePpm).append('\n')
+        sb.append("  LNA 档位：").append(lnaGains.size).append(" 档\n")
+        sb.append("信号：\n")
+        sb.append("  电平：").append("%.1f dB".format(signalDb)).append('\n')
+        sb.append("  噪声底：").append("%.1f dB".format(noiseFloorDb)).append('\n')
+        sb.append("  频谱峰值：").append("%.1f dB".format(spectrumPeakDb)).append('\n')
+        sb.append("  静噪门限：").append("%.1f dB".format(squelchDb)).append('\n')
+        sb.append("  静噪开：").append(if (squelchIsOpen) "是" else "否").append('\n')
+        sb.append("流健康：\n")
+        sb.append("  数据块：").append(blockCount).append('\n')
+        sb.append("  最近数据：").append(
+            when {
+                idle < 0 -> "尚未收到任何数据"
+                idle < 2000 -> "正常"
+                else -> "已中断 ${idle / 1000} 秒"
+            }).append('\n')
+        sb.append("  USB 读超时：").append(usbReadTimeouts).append(" 次\n")
+        sb.append("  USB 端点复位：").append(usbResets).append(" 次\n")
+        sb.append("  仿真源：").append(if (!isRealSource) "正常" else "不适用").append('\n')
+        return sb.toString()
+    }
+
     // ---------- 公共 API ----------
     fun start() {
         if (running) return
