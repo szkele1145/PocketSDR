@@ -129,7 +129,12 @@ fun RxPage(
                 val curHi = dbRange.second
                 // 缓动：范围跟着慢慢走，不跳变（跳变会让频谱整体上下抖）
                 dbRange = (curLo + (lo - curLo) * 0.15f) to (curHi + (hi - curHi) * 0.15f)
+            } else {
+                // 关闭自动范围：回到固定刻度（与瀑布默认一致）
+                if (dbRange.first != -100f || dbRange.second != 0f) dbRange = -100f to 0f
             }
+            // 瀑布的 dB→颜色映射必须与谱线同一范围，否则两者色阶对不上
+            waterfall.dynamicRange = dbRange
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }

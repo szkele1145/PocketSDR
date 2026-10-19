@@ -196,12 +196,22 @@ fun SpectrumWaterfall(
 
         // ---- dB 纵轴网格线（谱区）----
         // 没有 dB 刻度时，用户看不懂频谱高度代表什么：强台该有多高？噪声底在哪？
-        // 画 4 条参考线，配合左侧文字标签，频谱才可读。
+        // 自动 dB 范围（v2.25）下范围是动态的，刻度步长必须跟着范围选，
+        // 否则窄范围时标签会挤成一团、宽范围时又只有稀稀几条。
         if (spectrum.isNotEmpty() || peak.isNotEmpty()) {
             val dbRange = max(dbMax - dbMin, 1f)
-            val dbTicks = floatArrayOf(0f, -20f, -40f, -60f, -80f)
-            dbTicks.forEach { db ->
-                if (db < dbMin || db > dbMax) return@forEach
+            // 目标约 4~6 条网格线：步长从 10/20/25/50/100 里挑
+            val step = when {
+                dbRange / 4f <= 12f -> 10f
+                dbRange / 4f <= 22f -> 20f
+                dbRange / 4f <= 30f -> 25f
+                dbRange / 4f <= 55f -> 50f
+                else -> 100f
+            }
+            // 起点对齐到步长整数倍，且不超出上界
+            var db = kotlin.math.ceil(dbMax / step) * step
+            var guard = 0
+            while (db >= dbMin && guard++ < 40) {
                 val y = specH * (1f - (db - dbMin) / dbRange)
                 drawLine(
                     color = Color(0x22FFFFFF),
@@ -209,7 +219,7 @@ fun SpectrumWaterfall(
                     end = Offset(w, y),
                     strokeWidth = 1f
                 )
-                // dB 标签：画在左下角上方一点，避免压住谱线起始段
+                // dB 标签：画在左侧，字号小、半透明，不与谱线争视线
                 val label = if (db == 0f) "0" else db.toInt().toString()
                 drawText(
                     textMeasurer = textMeasurer,
@@ -217,6 +227,7 @@ fun SpectrumWaterfall(
                     style = TextStyle(fontSize = 8.sp, color = Color(0x668FA3B8)),
                     topLeft = Offset(2f, (y - 9f).coerceAtLeast(0f))
                 )
+                db -= step
             }
         }
 

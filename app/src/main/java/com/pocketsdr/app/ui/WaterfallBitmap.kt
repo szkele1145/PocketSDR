@@ -10,6 +10,10 @@ import android.graphics.Bitmap
  * 绘制线程读 front 页——无锁、无撕裂（Bitmap 像素访问非线程安全，双缓冲根治）。
  *
  * 新行写在顶部（时间从上往下），push 时历史整体下移一行。
+ *
+ * dB→颜色的映射范围可动态更新（v2.26）：与谱线显示范围共用同一来源，
+ * 否则自动 dB 范围下瀑布色阶与谱线脱节——谱线上的 -60dB 在瀑布里可能是亮红。
+ * DSP 线程每块读一次 range（@Volatile），改范围只是换引用级别的开销。
  */
 class WaterfallBitmap(
     val bins: Int,
@@ -23,6 +27,9 @@ class WaterfallBitmap(
     /** 绘制用 Bitmap（front 页，发布后只读） */
     @Volatile var bitmap: Bitmap = frontBitmap
         private set
+
+    /** 动态 dB 范围：null = 用构造默认。由 UI 线程在自动范围更新时写。 */
+    @Volatile var dynamicRange: Pair<Float, Float>? = null
 
     private val rowPixels = IntArray(bins)
     private val shiftBuf = IntArray(bins * (rows - 1))
@@ -53,9 +60,14 @@ class WaterfallBitmap(
 
     /** 推一行 dB 数据（长度 ≥ bins）。DSP 线程调用，无锁。 */
     fun pushRow(db: FloatArray) {
-        val range = dbMax - dbMin
+        // 动态范围优先：与谱线显示保持同一刻度
+        val dyn = dynamicRange
+        val lo = dyn?.first ?: dbMin
+        val hi = dyn?.second ?: dbMax
+        val range = hi - lo
+        if (range <= 0.5f) return
         for (x in 0 until bins) {
-            val v = ((db[x] - dbMin) / range).coerceIn(0f, 1f)
+            val v = ((db[x] - lo) / range).coerceIn(0f, 1f)
             rowPixels[x] = lut[(v * 255f).toInt()]
         }
         // back 页：历史下移 + 新行进 row0
