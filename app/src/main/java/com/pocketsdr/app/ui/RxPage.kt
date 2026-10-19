@@ -64,6 +64,8 @@ fun RxPage(
     var squelch by remember { mutableStateOf(engine.squelchDb) }
     // USB 健康警告（仅真机）：读超时/端点复位是供电与线材问题的直接证据
     var usbWarn by remember { mutableStateOf<String?>(null) }
+    // 静噪开闭状态（引擎侧）：用来给「信号质量」下结论
+    var squelchOpen by remember { mutableStateOf(engine.squelchIsOpen) }
     // 信号历史（最近 ~30 秒，250ms 一个点）：架天线时比盯瀑布更直观
     val signalHistory = remember { mutableStateListOf<Float>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
@@ -116,6 +118,7 @@ fun RxPage(
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
             if (engine.volume != volume) volume = engine.volume
             if (engine.muted != muted) muted = engine.muted
+            if (engine.squelchIsOpen != squelchOpen) squelchOpen = engine.squelchIsOpen
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
@@ -251,6 +254,17 @@ fun RxPage(
                                     "${mode.label} · $status" + "  ${sMeter(signalDb)} ${signalDb.toInt()}dB",
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
+                                )
+                                // 信号质量结论：S 表数字对新手不直观，直接说人话
+                                Text(
+                                    signalQualityText(signalDb, squelchOpen, squelch),
+                                    fontSize = 10.sp,
+                                    color = when {
+                                        squelchOpen && signalDb >= -45f -> Color(0xFF7DF3FF)
+                                        squelchOpen -> Color(0xFF00E5FF)
+                                        else -> Color(0xFF5A6B7F)
+                                    },
+                                    maxLines = 1
                                 )
                                 // USB 供电/线材异常直接亮在主界面：真机最常见的翻车原因，
                                 // 只写进 logcat 等于让用户瞎猜「是不是软件坏了」

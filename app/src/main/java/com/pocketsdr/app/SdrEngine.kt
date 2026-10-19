@@ -185,6 +185,9 @@ class SdrEngine private constructor(
 
     // ---------- 静噪 ----------
     private var squelchOpen = false
+    /** 静噪是否已开（DSP 线程写，UI 读）：开了说明信号确实超过门限 */
+    @Volatile var squelchIsOpen: Boolean = false
+        private set
     @Volatile var signalDb = -120f
     private var signalDbSmooth = -120f   // 信号强度条 EMA 平滑，避免跳闪
     /** 立体声锁定强度 0..1（UI 显示 ST 指示） */
@@ -605,6 +608,7 @@ class SdrEngine private constructor(
                 openStreak = 0
             }
         }
+        squelchIsOpen = squelchOpen
     }
 
     private fun buildAudioTrack(): AudioTrack {
