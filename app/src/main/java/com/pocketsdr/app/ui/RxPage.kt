@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
@@ -59,6 +60,8 @@ fun RxPage(
     var volume by remember { mutableStateOf(engine.volume) }
     var mode by remember { mutableStateOf(engine.mode) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
+    // 信号历史（最近 ~30 秒，250ms 一个点）：架天线时比盯瀑布更直观
+    val signalHistory = remember { mutableStateListOf<Float>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
@@ -102,6 +105,9 @@ fun RxPage(
             // 轮询期间滑条显示值必须与引擎实际值保持一致，否则「显示 -40 但实际 -100」
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
             if (engine.volume != volume) volume = engine.volume
+            // 采集信号历史：满了丢最旧的，容量固定不增长
+            signalHistory.add(engine.signalDb)
+            if (signalHistory.size > 120) signalHistory.removeAt(0)
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
@@ -179,6 +185,12 @@ fun RxPage(
                 )
             }
         }
+
+        // ===== 信号历史条（最近 30 秒）=====
+        SignalHistoryStrip(
+            history = signalHistory,
+            modifier = Modifier.background(Color(0xFF0D1219))
+        )
 
         // ===== 底部控制条 =====
         Surface(color = Color(0xFF101826), modifier = Modifier.fillMaxWidth()) {
@@ -481,5 +493,43 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
             tint = Color(0xFF00E5FF),
             modifier = Modifier.size(32.dp)
         )
+    }
+}
+
+/**
+ * 信号历史条（SDR# 的 Signal History）：最近 ~30 秒的 dB 曲线。
+ * 架天线/找信号时，「刚才动没动过」比「现在多强」更有信息量——
+ * 尤其人转身、天线挪位置时，历史曲线的突跳一目了然。
+ * 高度 36dp：够看清趋势，又不挤占频谱主体。
+ */
+@Composable
+private fun SignalHistoryStrip(history: List<Float>, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier = modifier.fillMaxWidth().height(36.dp)) {
+        if (history.size < 2) return@Canvas
+        val w = size.width
+        val h = size.height
+        // dB 范围：固定 -110..-20，跨台可比；不随当前值缩放（否则弱信号时整条线乱跳）
+        val dbMin = -110f
+        val dbMax = -20f
+        fun y(db: Float): Float =
+            h - ((db - dbMin) / (dbMax - dbMin)).coerceIn(0f, 1f) * h
+        // 底噪参考线（-80dB）
+        drawLine(
+            color = Color(0x335A6B7F),
+            start = Offset(0f, y(-80f)),
+            end = Offset(w, y(-80f)),
+            strokeWidth = 1f
+        )
+        val stepX = w / (history.size - 1)
+        var last: Offset? = null
+        for (i in history.indices) {
+            val p = Offset(i * stepX, y(history[i]))
+            last?.let { drawLine(Color(0xFF00E5FF), it, p, strokeWidth = 1.6f) }
+            last = p
+        }
+        // 当前值端点
+        last?.let {
+            drawCircle(Color(0xFFF6D55C), radius = 2.5f, center = it)
+        }
     }
 }
