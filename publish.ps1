@@ -32,7 +32,9 @@ function Invoke-Gh {
     $args = @("-s", "-k", "-X", $Method, $Url, "-H", $H, "-H", "Accept: application/vnd.github+json")
     if ($BodyFile) { $args += @("-H", "Content-Type: application/json", "--data-binary", "@$BodyFile") }
     if ($OutFile)  { $args += @("-o", $OutFile) }
-    & curl.exe @args
+    # 用 Out-String 拼成单个字符串：curl 输出多行时 PowerShell 会给数组，
+    # 直接拿去正则匹配会静默失败（v2.35.0 的上传判定就是这么坏的）
+    (& curl.exe @args) | Out-String
 }
 
 function Get-Json {
@@ -159,20 +161,31 @@ for ($i = 1; $i -le 3; $i++) {
     $resp = & curl.exe -s -k --retry 3 --retry-delay 4 -X POST `
         "https://uploads.github.com/repos/szkele1145/PocketSDR/releases/$releaseId/assets?name=$assetName" `
         -H "Authorization: token $Token" -H "Content-Type: application/octet-stream" --data-binary "@$apkTmp"
-    if ($resp -and [regex]::Match($resp, '"state":\s*"uploaded"').Groups[1].Value -eq "uploaded") {
+    # curl 输出在 PowerShell 里可能是字符串数组，必须先拼回单个字符串再匹配
+    $respText = ($resp | Out-String)
+    # 同名资产已存在 = 之前那次其实传成功了（GitHub 返回 422 already_exists）
+    if ($respText -match '"code":"already_exists"') {
         $uploaded = $true
-        Write-Host "    APK 已上传（$([regex]::Match($resp, '"size":\s*(\d+)').Groups[1].Value) 字节，第 $i 次）"
+        Write-Host "    APK 已存在（第 $i 次，GitHub 返回 already_exists）"
         break
     }
-    Write-Host "    第 $i 次上传失败，重试"; Start-Sleep -Seconds 4
+    if ($respText -match '"state":"uploaded"' -or $respText -match '"browser_download_url"') {
+        $uploaded = $true
+        $sz = [regex]::Match($respText, '"size":(\d+)').Groups[1].Value
+        Write-Host "    APK 已上传（$sz 字节，第 $i 次）"
+        break
+    }
+    Write-Host "    第 $i 次上传失败：$($respText.Substring(0, [Math]::Min(160, $respText.Length)))"
+    Start-Sleep -Seconds 4
 }
 if (-not $uploaded) { throw "APK 上传失败" }
 
 Write-Host "==> 8/8 最终校验"
 $rel = Get-Json "$ApiBase/releases/tags/$Tag"
 if ($rel.tag_name -ne $Tag) { throw "release tag 不对：$($rel.tag_name)" }
-if (-not $rel.assets -or $rel.assets[0].name -ne $assetName) { throw "release 资产不对" }
-Write-Host "    $Tag -> $($rel.assets[0].browser_download_url)"
+$asset = @($rel.assets) | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+if (-not $asset) { throw "release 资产 $assetName 不存在" }
+Write-Host "    $Tag -> $($asset.browser_download_url)"
 Write-Host "    提交 $commitSha"
 
 Push-Location $Repo
