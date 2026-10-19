@@ -66,6 +66,7 @@ fun RxPage(
     val signalHistory = remember { mutableStateListOf<Float>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
     var recordingPaused by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(engine.muted) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
@@ -109,6 +110,7 @@ fun RxPage(
             // 轮询期间滑条显示值必须与引擎实际值保持一致，否则「显示 -40 但实际 -100」
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
             if (engine.volume != volume) volume = engine.volume
+            if (engine.muted != muted) muted = engine.muted
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
@@ -285,7 +287,6 @@ fun RxPage(
                         }
                     }
                     StepButtons(engine, mode) { tuned = engine.tunedFreq }
-                    Spacer(Modifier.width(14.dp))
                     Text("🔊", fontSize = 15.sp)
                     Slider(
                         value = volume,
@@ -305,6 +306,32 @@ fun RxPage(
                         fontSize = 11.sp, color = Color(0xFF8FA3B8), fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(start = 4.dp).width(34.dp)
                     )
+                    // 静音开关：SDR 时想临时静音又不想关录音/断流，直接点
+                    OutlinedButton(
+                        onClick = { engine.muted = !engine.muted; muted = engine.muted },
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8)),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Text(if (muted) "🔇 静音中" else "🔊 静音", fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    OutlinedButton(
+                        onClick = { engine.muted = !engine.muted; muted = engine.muted },
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8)),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Text(if (muted) "🔇 静音中" else "🔊 静音", fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8))
+                    }
                     Spacer(Modifier.width(14.dp))
                     // 录音开关：录音中红底高亮，一眼可见；未录音灰底。
                     OutlinedButton(
