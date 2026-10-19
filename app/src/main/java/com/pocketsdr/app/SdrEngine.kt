@@ -171,6 +171,18 @@ class SdrEngine private constructor(
 
     val isRecording: Boolean get() = recorder?.recording == true
 
+    // ---------- 数据流健康（真机联调诊断）----------
+    /** 已处理的采样块数（读流是否在推进） */
+    @Volatile var blockCount: Long = 0
+        private set
+    /** 最近一次有数据的时间戳（ms），用于判断"流是否还活着" */
+    @Volatile var lastDataMs: Long = 0
+        private set
+
+    /** 距上次收到数据过了多久（ms）；0 表示从未收到 */
+    fun dataIdleMs(): Long =
+        if (lastDataMs == 0L) -1L else System.currentTimeMillis() - lastDataMs
+
     // ---------- 公共 API ----------
     fun start() {
         if (running) return
@@ -307,9 +319,20 @@ class SdrEngine private constructor(
         while (running) {
             applyPendingTune()  // 块头原子应用调谐（center+tuned 一致）
             val got = source.read(iqBuf, BLOCK)
-            if (got <= 0) break
+            if (got <= 0) {
+                // 源返回 <=0 有两类：正常关闭（stop 时 running 已置 false），
+                // 以及真机读不到数据、端点复位也救不回来。后者如果静静退出，
+                // 用户看到的就是「频谱不动了、点哪都没反应」——必须明确告知。
+                if (running) {
+                    SdrLog.e("DSP", "数据源中断（read=$got），DSP 循环退出")
+                    ui.pushStatus("收流中断：设备无数据，请重新插拔 USB")
+                }
+                break
+            }
             updateSpectrum(got)
             demodulate(got)
+            blockCount++
+            lastDataMs = System.currentTimeMillis()
         }
     }
 

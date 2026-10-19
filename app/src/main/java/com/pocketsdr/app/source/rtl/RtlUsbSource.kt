@@ -89,6 +89,11 @@ class RtlUsbSource(
 
     // bulk 读失败计数（连续超时诊断）
     private var readTimeouts = 0
+    /** 触发端点复位的连续超时阈值：1s 超时 × 8 ≈ 8 秒无数据 */
+    private val resetAfterTimeouts = 8
+    /** 累计复位次数（超过上限说明设备真的不行了，别无限重试） */
+    private var resetCount = 0
+    private val maxResets = 3
 
     override fun read(out: FloatArray, nSamples: Int): Int {
         if (closed) return -1
@@ -98,8 +103,31 @@ class RtlUsbSource(
                 val n = rtl.bulkRead(usbBuf, usbBufSize, 1000)
                 if (n <= 0) {
                     if (closed) return -1
-                    if (++readTimeouts % 20 == 1) {
+                    readTimeouts++
+                    if (readTimeouts == 1 || readTimeouts % 20 == 0) {
                         SdrLog.w("USB", "bulk 读超时 x${readTimeouts}（OTG 线/供电问题？）")
+                    }
+                    // 连续超时到阈值：复位采样端点再试。
+                    // 旧代码在这里无条件 continue，端点一旦卡住就永远读不到数据，
+                    // 而 applyPendingTune() 在 DSP 循环头部——结果是频谱冻结、
+                    // 改频率毫无反应，用户只能重启应用。现在主动自救。
+                    if (readTimeouts >= resetAfterTimeouts) {
+                        if (resetCount < maxResets) {
+                            resetCount++
+                            readTimeouts = 0
+                            SdrLog.w("USB", "连续无数据，复位采样端点（第 ${resetCount}/${maxResets} 次）")
+                            try {
+                                rtl.resetBuffer()
+                                usbPos = 0
+                                usbLen = 0
+                            } catch (e: Exception) {
+                                SdrLog.e("USB", "端点复位失败: ${e.message?.take(40)}")
+                                return -1
+                            }
+                        } else {
+                            SdrLog.e("USB", "复位 ${maxResets} 次仍无数据，判定设备已失效")
+                            return -1
+                        }
                     }
                     continue
                 }

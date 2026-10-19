@@ -217,7 +217,7 @@ fun SettingsPage(
 
         // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
         GroupCard("USB 诊断") {
-            UsbDiagCard()
+            UsbDiagCard(engine)
         }
 
         // ===== 关于 =====
@@ -257,7 +257,7 @@ fun SettingsPage(
  * 非官方棒子的 PID 落在白名单外时，这里是唯一的排查与自救入口。
  */
 @Composable
-fun UsbDiagCard() {
+fun UsbDiagCard(engine: SdrEngine? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var entries by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(listOf<com.pocketsdr.app.UsbDiag.Entry>()) }
     val refresh: () -> Unit = {
@@ -267,6 +267,31 @@ fun UsbDiagCard() {
     // 打开设置页时刷新一次（进入页面必然重组，插拔后重进即可）
     androidx.compose.runtime.LaunchedEffect(Unit) { refresh() }
     Column(Modifier.fillMaxWidth()) {
+        // 实时数据流状态：真机连上了但没数据，是最常见也最难猜的故障
+        if (engine != null && engine.isRealSource) {
+            var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                while (true) { kotlinx.coroutines.delay(500); tick++ }
+            }
+            @Suppress("UNUSED_EXPRESSION") tick
+            val idle = engine.dataIdleMs()
+            val alive = idle in 0..2000
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    when {
+                        idle < 0 -> "数据流：尚未收到任何数据"
+                        alive -> "数据流：正常（已收 ${engine.blockCount} 块）"
+                        else -> "数据流：已中断 ${idle / 1000} 秒（设备无响应）"
+                    },
+                    fontSize = 11.sp,
+                    color = if (alive) Color(0xFF7DF3FF) else Color(0xFFFF6B6B),
+                    modifier = Modifier.weight(1f)
+                )
+                Text("%.3fM".format(engine.sampleRate / 1e6),
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace)
+            }
+            Spacer(Modifier.height(4.dp))
+        }
         if (entries.isEmpty()) {
             Text("未检测到 USB 设备（插上 OTG 后回到此页）", fontSize = 11.sp, color = Color(0xFF5A6B7F))
         } else {
