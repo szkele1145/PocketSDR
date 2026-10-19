@@ -50,6 +50,8 @@ fun AppShell(
     stereoLock: Float,
     rdsName: String,
     rdsLocked: Boolean = false,
+    /** 插着设备但未连接的提示（null = 无提示） */
+    usbPending: String? = null,
     onExit: () -> Unit
 ) {
     var page by remember { mutableStateOf(0) }
@@ -70,7 +72,10 @@ fun AppShell(
                         signalDb = signalDb,
                         stereoLock = stereoLock,
                         rdsName = rdsName,
-                        rdsLocked = rdsLocked
+                        rdsLocked = rdsLocked,
+                        usbPending = usbPending,
+                        // 提示条上的「去连接」：直接切到设置页的 USB 诊断
+                        onOpenUsbDiag = { page = 1 }
                     )
                     1 -> SettingsPage(engine, status, onExit = onExit)
                 }

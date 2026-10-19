@@ -44,6 +44,11 @@ class MainActivity : ComponentActivity(), UiBridge {
     /** RDS 是否已位同步（还没解出台名时，用于告诉用户"正在等"而不是"坏了"） */
     private var rdsLocked by mutableStateOf(false)
     private var engineReady by mutableStateOf(false)
+    /**
+     * 插着 USB 设备但还没连上（授权未给 / VID 不在白名单）。
+     * 主界面据此显示提示条——「插了没反应」时用户至少知道下一步去哪。
+     */
+    private var usbPendingText by mutableStateOf<String?>(null)
 
     // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
     private val waterfallBmp = com.pocketsdr.app.ui.WaterfallBitmap(1024, 180)
@@ -61,6 +66,8 @@ class MainActivity : ComponentActivity(), UiBridge {
                 stereoLock = engine?.stereoLock ?: 0f
                 rdsName = engine?.rds?.stationName ?: ""
                 rdsLocked = engine?.rds?.dataLock ?: false
+                // 未连接提示跟着刷新：权限可能在后台被授予/撤销（用户到设置页操作）
+                refreshUsbPending()
             }
         }
     }
@@ -133,17 +140,38 @@ class MainActivity : ComponentActivity(), UiBridge {
                     // 插 U 盘/键鼠也会收到 ATTACHED 广播，非 SDR 设备不弹授权框。
                     // 白名单外的设备（非官方棒子）可在设置页用「USB 诊断」强制连接。
                     if (d != null && isRtlDevice(d)) maybeRequestPermission(d)
+                    refreshUsbPending()
                 }
                 ACTION_USB_PERMISSION -> {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     val d = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (granted && d != null) switchToHardware(d)
+                    refreshUsbPending()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     pushStatus("设备已拔出，回到仿真模式")
                     switchToSimulated()
+                    refreshUsbPending()
                 }
             }
+        }
+    }
+
+    /**
+     * 更新「插着设备但未连接」提示。
+     *
+     * 已连上硬件时清空；仿真模式下检查系统 USB 列表：有白名单设备等授权 → 提示授权；
+     * 有 bulk-in 端点但白名单外的设备 → 提示强制尝试。这层提示的存在意义：
+     * 用户插了棒子看到主界面毫无反应时，能立刻知道下一步去哪，而不是干等。
+     */
+    private fun refreshUsbPending() {
+        if (engine?.isRealSource == true) { usbPendingText = null; return }
+        val entries = try { UsbDiag.snapshot(usbManager) } catch (_: Exception) { emptyList() }
+        usbPendingText = when {
+            entries.isEmpty() -> null
+            entries.any { it.known && !it.granted } -> "USB 设备待授权：看系统弹窗，或到 设置 → USB 诊断 手动连接"
+            entries.any { it.bulkIn } -> "检测到 USB 设备（非白名单）：到 设置 → USB 诊断 强制尝试"
+            else -> null
         }
     }
 
@@ -211,6 +239,7 @@ class MainActivity : ComponentActivity(), UiBridge {
             try { conn.close() } catch (_: Exception) {}
             switchToSimulated()
         }
+        refreshUsbPending()
     }
 
     private fun switchToSimulated() {
@@ -225,6 +254,7 @@ class MainActivity : ComponentActivity(), UiBridge {
             engineReady = true
         }
         pushStatus("仿真模式")
+        refreshUsbPending()
     }
 
     private fun startEngine() {
@@ -244,6 +274,7 @@ class MainActivity : ComponentActivity(), UiBridge {
             }
             pushStatus("仿真模式 · 插入 RTL-SDR 自动连接")
         }
+        refreshUsbPending()
         startRxService(lastF)
         engineReady = true
     }
@@ -292,6 +323,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 stereoLock = stereoLock,
                 rdsName = rdsName,
                 rdsLocked = rdsLocked,
+                usbPending = usbPendingText,
                 onExit = { finish() }
             )
         } else {

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Realtek RTL2832U 桥接（绝大多数 RTL-SDR 棒子） -->
     <usb-device
         vendor-id="0x0bda"
         product-id="0x2832" />
@@ -9,7 +10,29 @@
     <usb-device
         vendor-id="0x0bda"
         product-id="0x2831" />
+    <!-- FC0013 量产棒常见：Leadtek/杂牌用 FITI/其他桥接 -->
     <usb-device
         vendor-id="0x0413"
         product-id="0x6680" />
+    <usb-device
+        vendor-id="0x1f4d"
+        product-id="0xb803" />
+    <usb-device
+        vendor-id="0x1f4d"
+        product-id="0xc803" />
+    <usb-device
+        vendor-id="0x1b80"
+        product-id="0xd398" />
+    <usb-device
+        vendor-id="0x1b80"
+        product-id="0xd397" />
+    <usb-device
+        vendor-id="0x1b80"
+        product-id="0xd393" />
+    <usb-device
+        vendor-id="0x185b"
+        product-id="0x0620" />
+    <usb-device
+        vendor-id="0x185b"
+        product-id="0x0650" />
 </resources>

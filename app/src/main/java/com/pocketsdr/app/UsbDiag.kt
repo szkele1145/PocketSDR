@@ -31,14 +31,29 @@ object UsbDiag {
     }
 
     /**
-     * 白名单，必须与 res/xml/device_filter.xml 完全一致。
-     * 两处不一致会出现最迷惑的现象：系统自动拉起应用，应用却拒绝认设备。
+     * 已知的 RTL-SDR 桥接芯片 VID/PID 白名单。
+     *
+     * 必须与 res/xml/device_filter.xml 完全一致：两处不一致会出现最迷惑的现象——
+     * 系统按 filter 自动拉起应用，应用却拒绝认设备（用户看到「插了没反应」）。
+     *
+     * 覆盖 Realtek RTL2832U/RTL2838 系列，以及常见的 FC0013 量产棒桥接方案。
      */
-    fun isKnown(vid: Int, pid: Int): Boolean = when (vid) {
-        0x0bda -> pid == 0x2832 || pid == 0x2838 || pid == 0x2831
-        0x0413 -> pid == 0x6680
-        else -> false
-    }
+    private val KNOWN_IDS: Set<Int> = setOf(
+        0x0bda shl 16 or 0x2832,   // RTL2832U（最常见）
+        0x0bda shl 16 or 0x2838,   // RTL2838
+        0x0bda shl 16 or 0x2831,   // RTL2831
+        0x0413 shl 16 or 0x6680,   // FITI（部分量产棒）
+        0x1f4d shl 16 or 0xb803,   // FC0013 量产棒
+        0x1f4d shl 16 or 0xc803,
+        0x1b80 shl 16 or 0xd398,   // 杂牌 RTL2832
+        0x1b80 shl 16 or 0xd397,
+        0x1b80 shl 16 or 0xd393,
+        0x185b shl 16 or 0x0620,   // 另一类量产棒
+        0x185b shl 16 or 0x0650
+    )
+
+    /** 白名单，必须与 res/xml/device_filter.xml 完全一致。 */
+    fun isKnown(vid: Int, pid: Int): Boolean = (vid shl 16 or pid) in KNOWN_IDS
 
     /** 是否有 bulk-in 端点：RTL2832 的 IQ 数据就走这个，没有则必然连不上 */
     private fun hasBulkIn(d: UsbDevice): Boolean {

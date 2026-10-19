@@ -51,6 +51,10 @@ fun RxPage(
     stereoLock: Float,
     rdsName: String,
     rdsLocked: Boolean = false,
+    /** 插着 USB 设备但没连上时的提示条 */
+    usbPending: String? = null,
+    /** 提示条上的「去连接」→ 跳设置页 USB 诊断 */
+    onOpenUsbDiag: () -> Unit = {},
     onExit: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -268,18 +272,24 @@ fun RxPage(
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
                                 )
-                                // 信号质量结论（人话）与 USB 警告共占一行：USB 异常优先显示，
-                                // 质量结论常驻；避免三行小字挤占横屏纵向空间
+                                // 状态行优先级：未连接（最根本问题）> USB 断流告警 > 信号质量结论。
+                                // 三者共占一行，避免小字堆叠把横屏频谱压扁
+                                val line = usbPending ?: usbWarn
+                                    ?: signalQualityText(signalDb, squelchOpen, squelch)
                                 Text(
-                                    usbWarn ?: signalQualityText(signalDb, squelchOpen, squelch),
+                                    line,
                                     fontSize = 10.sp,
                                     color = when {
+                                        usbPending != null -> Color(0xFFF6D55C)
                                         usbWarn != null -> Color(0xFFFF6B6B)
                                         squelchOpen && signalDb >= -45f -> Color(0xFF7DF3FF)
                                         squelchOpen -> Color(0xFF00E5FF)
                                         else -> Color(0xFF5A6B7F)
                                     },
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    // 未连接提示可点：直接跳设置页 USB 诊断
+                                    modifier = if (usbPending != null)
+                                        Modifier.clickable { onOpenUsbDiag() } else Modifier
                                 )
                             }
                         }
