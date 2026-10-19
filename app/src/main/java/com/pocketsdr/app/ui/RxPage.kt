@@ -94,6 +94,8 @@ fun RxPage(
             tuned = f
             mode = FreqStore.modeFromIndex(store.lastMode)
             center = engine.centerFreq
+            // 恢复瀑布速度档位（设置页改过要留下来）
+            engine.waterfallSpeed = store.waterfallSpeed.coerceIn(0, 2)
         }
     }
 

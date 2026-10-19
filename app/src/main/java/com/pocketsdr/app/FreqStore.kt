@@ -57,6 +57,11 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("peakHold", false)
         set(v) { prefs.edit().putBoolean("peakHold", v).apply() }
 
+    /** 瀑布速度档位：0 慢 / 1 中 / 2 快 */
+    var waterfallSpeed: Int
+        get() = prefs.getInt("waterfallSpeed", 1)
+        set(v) { prefs.edit().putInt("waterfallSpeed", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

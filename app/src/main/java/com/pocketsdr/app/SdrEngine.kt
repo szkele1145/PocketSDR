@@ -183,6 +183,17 @@ class SdrEngine private constructor(
     // 瀑布行累积计数
     private var fftCount = 0
 
+    /**
+     * 瀑布刷新速度档位。
+     *
+     * 0 = 慢（约 3 行/秒，盯弱信号漂移/看调制细节）
+     * 1 = 中（默认，约 7.7 行/秒）
+     * 2 = 快（约 15.5 行/秒，快速扫频时信号不漏）
+     *
+     * 慢档不是"更真实"，而是给用户看时间变化用的；快档保证快速调谐时不漏掉瞬时信号。
+     */
+    @Volatile var waterfallSpeed: Int = 1
+
     // ---------- 静噪 ----------
     private var squelchOpen = false
     /** 静噪是否已开（DSP 线程写，UI 读）：开了说明信号确实超过门限 */
@@ -423,7 +434,13 @@ class SdrEngine private constructor(
             } else -200f
         }
         specFlip = !specFlip
-        if (++fftCount % 4 == 0) { // ~15.5 行/秒 瀑布
+        // 瀑布行率随档位：慢档每 16 帧一行（约 3 行/秒），中档每 8 帧，快档每 4 帧
+        val period = when (waterfallSpeed) {
+            0 -> 16
+            1 -> 8
+            else -> 4
+        }
+        if (++fftCount % period == 0) {
             ui.pushWaterfallRow(out.copyOf())
         }
         updateNoiseFloor(smooth)

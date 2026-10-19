@@ -243,6 +243,33 @@ fun SettingsPage(
                 Text("按实测噪声底自动缩放纵轴，不同增益下都能看清信号",
                     fontSize = 10.sp, color = Color(0xFF5A6B7F))
             }
+            // 瀑布速度三档：慢档历史长（60 秒）适合盯弱信号，快档不漏瞬时信号
+            var wfSpeed by remember { mutableStateOf(engine.waterfallSpeed) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("瀑布速度", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                Spacer(Modifier.width(10.dp))
+                listOf("慢", "中", "快").forEachIndexed { i, label ->
+                    val on = wfSpeed == i
+                    OutlinedButton(
+                        onClick = { wfSpeed = i; engine.waterfallSpeed = i; store.waterfallSpeed = i },
+                        modifier = Modifier.padding(end = 4.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (on) Color(0xFF00E5FF) else Color(0xFF1A2230),
+                            contentColor = if (on) Color(0xFF06121A) else Color(0xFF8FA3B8)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) { Text(label, fontSize = 11.sp) }
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    when (wfSpeed) {
+                        0 -> "3 行/秒 · 约 60 秒历史"
+                        1 -> "8 行/秒 · 约 24 秒历史"
+                        else -> "16 行/秒 · 约 12 秒历史"
+                    },
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F)
+                )
+            }
         }
 
         // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
