@@ -72,7 +72,10 @@ fun RxPage(
     // 静噪开闭状态（引擎侧）：用来给「信号质量」下结论
     var squelchOpen by remember { mutableStateOf(engine.squelchIsOpen) }
     // 信号历史（最近 ~30 秒，250ms 一个点）：架天线时比盯瀑布更直观
-    val signalHistory = remember { mutableStateListOf<Float>() }
+    // 采集信号历史：满了丢最旧的，容量固定不增长。
+    // 连频率一起记：换了台之后，旧台的信号强度和新台放在同一条曲线上毫无意义。
+    // 画线时频率不同就断开，用户一眼能看出「换台了」。
+    val signalHistory = remember { mutableStateListOf<Pair<Long, Float>>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
     var recordingPaused by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(engine.muted) }
@@ -112,11 +115,16 @@ fun RxPage(
                 tuned = newTuned
                 store.lastFreq = newTuned
                 store.lastCenter = engine.centerFreq
+                // 换台了：清空信号历史。旧台的强度留在曲线上会让人误以为
+                // 「信号突然掉了」，其实是换了个频点而已。
+                signalHistory.clear()
             }
             val newMode = engine.mode
             if (newMode != mode) {
                 mode = newMode
                 store.lastMode = FreqStore.modeIndex(newMode)
+                // 换模式：不同调制的 dB 尺度不同，历史曲线没有可比性
+                signalHistory.clear()
             }
             recording = engine.isRecording
             recordingPaused = engine.recordingPaused
@@ -127,7 +135,7 @@ fun RxPage(
             if (engine.muted != muted) muted = engine.muted
             if (engine.squelchIsOpen != squelchOpen) squelchOpen = engine.squelchIsOpen
             // 采集信号历史：满了丢最旧的，容量固定不增长
-            signalHistory.add(engine.signalDb)
+            signalHistory.add(engine.tunedFreq to engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
             // 自动 dB 范围：底噪下留 15dB，峰值上留 8dB；总高度至少 40dB，最多到 0dB
             if (engine.autoDbRange) {
@@ -639,9 +647,12 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
  * 架天线/找信号时，「刚才动没动过」比「现在多强」更有信息量——
  * 尤其人转身、天线挪位置时，历史曲线的突跳一目了然。
  * 高度 36dp：够看清趋势，又不挤占频谱主体。
+ *
+ * 每个点连同当时的调谐频率一起记录：换了台之后，旧台的强度和新台画在同一条线上
+ * 会误导用户（看着像信号突然掉了，其实只是换了个频点）。所以频率一变，曲线就断开。
  */
 @Composable
-private fun SignalHistoryStrip(history: List<Float>, modifier: Modifier = Modifier) {
+private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modifier = Modifier) {
     androidx.compose.foundation.Canvas(modifier = modifier.fillMaxWidth().height(36.dp)) {
         if (history.size < 2) return@Canvas
         val w = size.width
@@ -660,10 +671,16 @@ private fun SignalHistoryStrip(history: List<Float>, modifier: Modifier = Modifi
         )
         val stepX = w / (history.size - 1)
         var last: Offset? = null
+        var lastFreq: Long? = null
         for (i in history.indices) {
-            val p = Offset(i * stepX, y(history[i]))
-            last?.let { drawLine(Color(0xFF00E5FF), it, p, strokeWidth = 1.6f) }
+            val (freq, db) = history[i]
+            val p = Offset(i * stepX, y(db))
+            // 只有同一频率的点才连线；换台处断开
+            if (last != null && lastFreq == freq) {
+                drawLine(Color(0xFF00E5FF), last!!, p, strokeWidth = 1.6f)
+            }
             last = p
+            lastFreq = freq
         }
         // 当前值端点
         last?.let {
