@@ -194,9 +194,13 @@ class MainActivity : ComponentActivity(), UiBridge {
                 it.start()
                 it.tuneTo(tuneHint)
                 restoreCommon(it, store)
+                // 真机首次连接把静噪放到最低：-40dB 是仿真源的电平尺度，
+                // 真机信号若低于它就会「连上了却一片死寂」，看着像坏了。
+                // 用户听到声音后再自行上调到合适位置。
+                it.squelchDb = -100f
                 engineReady = true
             }
-            pushStatus("RTL-SDR 已连接 · FC0013")
+            pushStatus("RTL-SDR 已连接 · FC0013 · 静噪已全开（有声后可上调）")
         } catch (e: Exception) {
             // 关键：初始化失败必须归还 USB 连接，否则后续重试全部「设备忙」，只能重启应用
             pushStatus("硬件初始化失败: ${e.message?.take(60)}")
