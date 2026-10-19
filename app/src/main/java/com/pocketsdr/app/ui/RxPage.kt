@@ -75,6 +75,9 @@ fun RxPage(
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
+    // 自动 dB 范围：底噪 25% 分位数往下留 15dB 余量，上限取峰值 + 8dB（限幅 -20..0）
+    // 固定范围在真机上不是「太高看不全」就是「太低全黑」——这正是 v2.22 修不干净的根因
+    var dbRange by remember { mutableStateOf(-100f to 0f) }
 
     // 启动时恢复上次收听的频率与模式：打开即听，不必重新输入
     var restored by remember { mutableStateOf(false) }
@@ -114,6 +117,19 @@ fun RxPage(
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
+            // 自动 dB 范围：底噪下留 15dB，峰值上留 8dB；总高度至少 40dB，最多到 0dB
+            if (engine.autoDbRange) {
+                val floor = engine.noiseFloorDb
+                val peak = engine.spectrumPeakDb
+                var lo = (floor - 15f).coerceAtLeast(-120f)
+                var hi = (peak + 8f).coerceAtMost(0f)
+                if (hi - lo < 40f) hi = (lo + 40f).coerceAtMost(0f)
+                if (hi - lo < 40f) lo = hi - 40f
+                val curLo = dbRange.first
+                val curHi = dbRange.second
+                // 缓动：范围跟着慢慢走，不跳变（跳变会让频谱整体上下抖）
+                dbRange = (curLo + (lo - curLo) * 0.15f) to (curHi + (hi - curHi) * 0.15f)
+            }
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
@@ -133,7 +149,7 @@ fun RxPage(
                 tunedFreq = tuned,
                 span = viewSpan,
                 fullSpan = engine.sampleRate.toLong(),
-                dbMin = -100f, dbMax = 0f,
+                dbMin = dbRange.first, dbMax = dbRange.second,
                 onTune = { f ->
                     engine.tuneWithinSpan(f)
                     tuned = engine.tunedFreq

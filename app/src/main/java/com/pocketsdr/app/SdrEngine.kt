@@ -151,6 +151,25 @@ class SdrEngine private constructor(
     val latestSpectrum: FloatArray get() = specSmooth
 
     /**
+     * 自动 dB 基线：噪声底的 25% 分位数（dB）。
+     *
+     * 真机噪声底随增益/天线/环境差几十 dB，固定显示范围不是「太高看不全」就是
+     * 「太低全黑」。这里用分位数而非中位数——满屏都是强台时中位数会被拉高，
+     * 分位数更接近真实底噪。
+     */
+    @Volatile var noiseFloorDb: Float = -85f
+        private set
+    /** 频谱峰值（dB），用于定显示上限 */
+    @Volatile var spectrumPeakDb: Float = -30f
+        private set
+    /** 是否启用自动 dB 范围 */
+    @Volatile var autoDbRange: Boolean = true
+
+    private val noiseSortBuf = FloatArray(256)   // 噪声底统计采样缓冲
+    private var noiseFill = 0
+    private var noiseCount = 0
+
+    /**
      * 峰值保持缓冲（SDR# 的 Peak Hold）。
      * 每帧取"当前值"与"旧峰值缓慢衰减"的较大者：短暂出现的弱信号会留下痕迹，
      * 便于在瀑布来不及看清时定位载波。关闭时填 -200 让线自然消失。
@@ -397,6 +416,36 @@ class SdrEngine private constructor(
         if (++fftCount % 4 == 0) { // ~15.5 行/秒 瀑布
             ui.pushWaterfallRow(out.copyOf())
         }
+        updateNoiseFloor(smooth)
+    }
+
+    /**
+     * 统计噪声底与峰值，供 UI 定显示范围。
+     * 每 8 帧（约 0.5 秒）统计一次：取 64 个等间隔 bin 的 dB 值，
+     * 排序后取 25% 分位作底噪、最大值作峰值。
+     */
+    private var noiseTick = 0
+    private fun updateNoiseFloor(smooth: FloatArray) {
+        if (++noiseTick % 8 != 0) return
+        val n = smooth.size
+        val step = (n / 64).coerceAtLeast(1)
+        var c = 0
+        var peak = -120f
+        var i = 0
+        while (i < n && c < 64) {
+            val v = smooth[i]
+            if (v > peak) peak = v
+            noiseSortBuf[c++] = v
+            i += step
+        }
+        if (c < 8) return
+        val slice = noiseSortBuf.copyOf(c)
+        java.util.Arrays.sort(slice)
+        val floor = slice[(c / 4).coerceIn(0, c - 1)]
+        // 平滑：底噪变化慢，突变说明增益变了，1 秒内跟上
+        noiseFloorDb = if (noiseCount == 0) floor else 0.7f * noiseFloorDb + 0.3f * floor
+        spectrumPeakDb = if (noiseCount == 0) peak else 0.5f * spectrumPeakDb + 0.5f * peak
+        noiseCount++
     }
 
     private fun demodulate(n: Int) {

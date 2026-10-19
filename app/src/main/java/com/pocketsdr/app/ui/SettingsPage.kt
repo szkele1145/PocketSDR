@@ -232,6 +232,17 @@ fun SettingsPage(
                 Text("黄线记录出现过的最高电平，弱信号一闪而过也留痕",
                     fontSize = 10.sp, color = Color(0xFF5A6B7F))
             }
+            var autoDb by remember { mutableStateOf(engine.autoDbRange) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("自动 dB 范围", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                Switch(checked = autoDb, onCheckedChange = {
+                    autoDb = it
+                    engine.autoDbRange = it
+                }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
+                Spacer(Modifier.width(10.dp))
+                Text("按实测噪声底自动缩放纵轴，不同增益下都能看清信号",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
+            }
         }
 
         // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
