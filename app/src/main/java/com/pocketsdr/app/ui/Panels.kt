@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -20,6 +21,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -174,8 +176,21 @@ fun LogDialog(onDismiss: () -> Unit) {
 fun RecordingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     var files by remember { mutableStateOf(listWavFiles(context)) }
+    // 播放器：对话框内单实例，正在播的条目高亮 + 图标切换
+    var playingPath by remember { mutableStateOf<String?>(null) }
+    val player = remember { android.media.MediaPlayer() }
+    DisposableEffect(Unit) {
+        onDispose {
+            try { player.stop() } catch (_: IllegalStateException) {}
+            player.release()
+        }
+    }
+    fun stopPlay() {
+        try { player.stop() } catch (_: IllegalStateException) {}
+        playingPath = null
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { stopPlay(); onDismiss() },
         title = { Text("录音文件 (${files.size})") },
         text = {
             if (files.isEmpty()) {
@@ -183,15 +198,33 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
             } else {
                 LazyColumn(Modifier.height(340.dp)) {
                     items(files, key = { it.absolutePath }) { f ->
+                        val isPlaying = playingPath == f.absolutePath
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                         ) {
-                            Icon(Icons.Filled.PlayArrow, null, tint = Color(0xFF00E5FF),
-                                modifier = Modifier.padding(end = 6.dp).height(20.dp))
+                            IconButton(onClick = {
+                                if (isPlaying) { stopPlay(); return@IconButton }
+                                try {
+                                    player.reset()
+                                    player.setDataSource(f.absolutePath)
+                                    player.prepare()
+                                    player.start()
+                                    playingPath = f.absolutePath
+                                    player.setOnCompletionListener { playingPath = null }
+                                } catch (_: Exception) {}
+                            }, modifier = Modifier.padding(0.dp)) {
+                                Icon(
+                                    if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                                    if (isPlaying) "停止" else "播放",
+                                    tint = if (isPlaying) Color(0xFFF6D55C) else Color(0xFF00E5FF),
+                                    modifier = Modifier.height(20.dp)
+                                )
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text(f.name, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                                    color = Color(0xFFD0DAE4), maxLines = 1)
+                                    color = if (isPlaying) Color(0xFFF6D55C) else Color(0xFFD0DAE4),
+                                    maxLines = 1)
                                 Text(
                                     "${SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(f.lastModified()))}  " +
                                         wavDuration(f) + "  %.1fMB".format(f.length() / 1e6),
@@ -212,7 +245,10 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                             }, modifier = Modifier.padding(0.dp)) {
                                 Icon(Icons.Filled.Share, "分享", tint = Color(0xFF7DF3FF))
                             }
-                            IconButton(onClick = { f.delete(); files = listWavFiles(context) }) {
+                            IconButton(onClick = {
+                                if (isPlaying) stopPlay()
+                                f.delete(); files = listWavFiles(context)
+                            }) {
                                 Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F))
                             }
                         }
@@ -220,7 +256,7 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+        confirmButton = { TextButton(onClick = { stopPlay(); onDismiss() }) { Text("关闭") } }
     )
 }
 

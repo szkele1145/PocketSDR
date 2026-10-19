@@ -181,6 +181,18 @@ class SdrEngine private constructor(
 
     fun stopRecording(): String? = recorder?.stop()
 
+    /** 暂停录音（丢弃后续帧，文件不增长；WAV 无暂停语义，恢复后同一文件继续追加） */
+    fun pauseRecording() {
+        recorder?.let { it.paused = true }
+    }
+
+    /** 恢复录音 */
+    fun resumeRecording() {
+        recorder?.let { it.paused = false }
+    }
+
+    val recordingPaused: Boolean get() = recorder?.paused == true
+
     val isRecording: Boolean get() = recorder?.recording == true
 
     // ---------- 数据流健康（真机联调诊断）----------

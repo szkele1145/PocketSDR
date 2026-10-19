@@ -8,6 +8,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -63,6 +65,7 @@ fun RxPage(
     // 信号历史（最近 ~30 秒，250ms 一个点）：架天线时比盯瀑布更直观
     val signalHistory = remember { mutableStateListOf<Float>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
+    var recordingPaused by remember { mutableStateOf(false) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
@@ -101,6 +104,7 @@ fun RxPage(
                 store.lastMode = FreqStore.modeIndex(newMode)
             }
             recording = engine.isRecording
+            recordingPaused = engine.recordingPaused
             // 静噪/音量可能被外部改（真机连接时静噪自动全开），
             // 轮询期间滑条显示值必须与引擎实际值保持一致，否则「显示 -40 但实际 -100」
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
@@ -305,35 +309,76 @@ fun RxPage(
                     // 录音开关：录音中红底高亮，一眼可见；未录音灰底。
                     OutlinedButton(
                         onClick = {
-                            if (recording) {
-                                engine.stopRecording()
-                                recording = false
-                            } else {
-                                val ok = engine.startRecording(context)
-                                if (ok) recording = true
+                            when {
+                                recording && !recordingPaused -> {   // 录音中 → 暂停
+                                    engine.pauseRecording()
+                                    recordingPaused = true
+                                }
+                                recording && recordingPaused -> {    // 暂停中 → 继续
+                                    engine.resumeRecording()
+                                    recordingPaused = false
+                                }
+                                else -> {                             // 未录 → 开始
+                                    val ok = engine.startRecording(context)
+                                    if (ok) { recording = true; recordingPaused = false }
+                                }
                             }
                         },
                         modifier = Modifier.padding(horizontal = 4.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                            contentColor = if (recording && !recordingPaused) Color(0xFFFF6B6B)
+                                           else if (recordingPaused) Color(0xFFF6D55C)
+                                           else Color(0xFF8FA3B8),
                         ),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Filled.Stop,
-                                contentDescription = if (recording) "停止录音" else "开始录音",
-                                tint = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                                imageVector = if (recording && !recordingPaused) Icons.Filled.Pause
+                                             else if (recordingPaused) Icons.Filled.PlayArrow
+                                             else Icons.Filled.Stop,
+                                contentDescription = when {
+                                    recording && !recordingPaused -> "暂停录音"
+                                    recordingPaused -> "继续录音"
+                                    else -> "开始录音"
+                                },
+                                tint = if (recording && !recordingPaused) Color(0xFFFF6B6B)
+                                       else if (recordingPaused) Color(0xFFF6D55C)
+                                       else Color(0xFF8FA3B8),
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                if (recording) "录音中" else "录音",
+                                when {
+                                    recording && !recordingPaused -> "录音中"
+                                    recordingPaused -> "已暂停"
+                                    else -> "录音"
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (recording) Color(0xFFFF6B6B) else Color(0xFF8FA3B8),
+                                color = if (recording && !recordingPaused) Color(0xFFFF6B6B)
+                                       else if (recordingPaused) Color(0xFFF6D55C)
+                                       else Color(0xFF8FA3B8),
                                 modifier = Modifier.padding(start = 4.dp)
                             )
+                        }
+                    }
+                    // 录音中额外给一个「停止」：暂停/继续与停止是两个不同意图，
+                    // 塞进同一个按钮会让用户不敢点（怕点错丢录音）
+                    if (recording) {
+                        OutlinedButton(
+                            onClick = {
+                                engine.stopRecording()
+                                recording = false
+                                recordingPaused = false
+                            },
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF5A6B7F)),
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+                        ) {
+                            Text("■ 停", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                color = Color(0xFF5A6B7F))
                         }
                     }
                 }

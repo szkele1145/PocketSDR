@@ -15,6 +15,8 @@ class WavRecorder(private val context: Context) {
 
     @Volatile var recording = false
         private set
+    @Volatile var paused = false
+        set(value) { field = value }
     @Volatile var filePath: String? = null
         private set
 
@@ -44,9 +46,9 @@ class WavRecorder(private val context: Context) {
             true
         } catch (e: Exception) { false }
     }
-    /** DSP 线程调用：追加一帧立体声 16bit */
+    /** DSP 线程调用：追加一帧立体声 16bit。暂停时直接丢弃（WAV 是连续流，没有暂停语义）。 */
     fun write(frame: ShortArray, count: Int) {
-        if (!recording) return
+        if (!recording || paused) return
         val chunk = ByteArray(count * 2)
         for (k in 0 until count) {
             val v = frame[k]
