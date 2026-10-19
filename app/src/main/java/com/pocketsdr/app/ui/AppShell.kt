@@ -44,6 +44,7 @@ fun AppShell(
     engine: com.pocketsdr.app.SdrEngine,
     spectrum: FloatArray,
     waterfall: WaterfallBitmap,
+    peak: FloatArray,
     status: String,
     signalDb: Float,
     stereoLock: Float,
@@ -60,8 +61,14 @@ fun AppShell(
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 when (page) {
                     0 -> RxPage(
-                        engine, spectrum, waterfall, status,
-                        signalDb, stereoLock, rdsName
+                        engine = engine,
+                        spectrum = spectrum,
+                        waterfall = waterfall,
+                        peak = peak,
+                        status = status,
+                        signalDb = signalDb,
+                        stereoLock = stereoLock,
+                        rdsName = rdsName
                     )
                     1 -> SettingsPage(engine, status, onExit = onExit)
                 }

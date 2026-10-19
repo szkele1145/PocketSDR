@@ -137,6 +137,16 @@ class SdrEngine private constructor(
     private val specSmooth = FloatArray(fftSize)
     /** UI 谱线读平滑值（瀑布用原始值） */
     val latestSpectrum: FloatArray get() = specSmooth
+
+    /**
+     * 峰值保持缓冲（SDR# 的 Peak Hold）。
+     * 每帧取"当前值"与"旧峰值缓慢衰减"的较大者：短暂出现的弱信号会留下痕迹，
+     * 便于在瀑布来不及看清时定位载波。关闭时填 -200 让线自然消失。
+     */
+    private val specPeak = FloatArray(fftSize) { -200f }
+    @Volatile var peakHoldEnabled: Boolean = false
+    /** UI 读峰值线（关闭时全为 -200，画出来在屏幕外，等于不显示） */
+    val latestPeak: FloatArray get() = specPeak
     private val fftDb = FloatArray(fftSize)
 
     // 瀑布行累积计数
@@ -318,6 +328,10 @@ class SdrEngine private constructor(
         val half = fftSize / 2
         val out = if (specFlip) specB else specA
         val smooth = specSmooth   // 谱线专用平滑缓冲
+        val peak = specPeak
+        val holdOn = peakHoldEnabled
+        // 峰值衰减系数：每帧掉约 0.25 dB，肉眼看到"缓慢下滑"而不是黏住不动
+        val peakDecay = 0.25f
         for (k in 0 until fftSize) {
             val src = (k + half) and (fftSize - 1)
             val db = 10f * (Math.log10((fftPower[src] * scaleInv).toDouble() + 1e-12)).toFloat()
@@ -326,6 +340,11 @@ class SdrEngine private constructor(
             val prev = smooth[k]
             smooth[k] = if (db > prev) db * 0.55f + prev * 0.45f
                         else db * 0.12f + prev * 0.88f
+            // 峰值保持：立即跟上新高，否则按固定速率衰减
+            peak[k] = if (holdOn) {
+                val decayed = peak[k] - peakDecay
+                if (db > decayed) db else decayed
+            } else -200f
         }
         specFlip = !specFlip
         if (++fftCount % 4 == 0) { // ~15.5 行/秒 瀑布

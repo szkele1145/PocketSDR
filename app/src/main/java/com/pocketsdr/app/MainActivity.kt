@@ -261,6 +261,7 @@ class MainActivity : ComponentActivity(), UiBridge {
     private fun restoreCommon(eng: SdrEngine, store: com.pocketsdr.app.FreqStore) {
         eng.selectMode(com.pocketsdr.app.FreqStore.modeFromIndex(store.lastMode))
         eng.volume = store.lastVolume
+        eng.peakHoldEnabled = store.peakHold
     }
 
     /** 白名单判定统一收口到 UsbDiag（与 device_filter.xml 对齐） */
@@ -278,6 +279,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 engine = eng,
                 spectrum = eng.latestSpectrum,
                 waterfall = waterfallBmp,
+                peak = eng.latestPeak,
                 status = status,
                 signalDb = signalDb,
                 stereoLock = stereoLock,

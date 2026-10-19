@@ -30,6 +30,8 @@ import kotlin.math.max
 fun SpectrumWaterfall(
     spectrum: FloatArray,
     waterfall: WaterfallBitmap,
+    /** 峰值保持谱线（关闭时全为 -200，画不出屏幕） */
+    peak: FloatArray = FloatArray(0),
     centerFreq: Long,
     tunedFreq: Long,
     /** 显示 span（可小于 fullSpan = 数字变焦） */
@@ -50,6 +52,7 @@ fun SpectrumWaterfall(
     // 双缓冲：key 跟踪 bitmap 引用（发布交换后重组取新页）
     val image = remember(waterfall.bitmap) { waterfall.bitmap.asImageBitmap() }
     val specColor = Color(0xFF00E5FF)
+    val peakColor = Color(0xFFF6D55C)
     val specFill = Color(0x3300E5FF)
     val markerColor = Color(0xFFFF5252)
 
@@ -146,6 +149,30 @@ fun SpectrumWaterfall(
                 fill.close()
                 drawPath(fill, specFill)
                 drawPath(line, specColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+            }
+        }
+
+        // ---- 峰值保持线（黄色，画在谱线之上；关闭时值全为 -200，落在屏外） ----
+        if (peak.size == spectrum.size && peak.isNotEmpty()) {
+            val n = peak.size
+            val dbRange = max(dbMax - dbMin, 1f)
+            val fracL = ((centerFreq - span / 2) - (centerFreq - fullSpan / 2)).toFloat() / fullSpan
+            val fracR = fracL + span.toFloat() / fullSpan
+            val k0 = (fracL * (n - 1)).toInt().coerceIn(0, n - 1)
+            val k1 = (fracR * (n - 1)).toInt().coerceIn(k0 + 1, n)
+            val visN = k1 - k0
+            val stepX = w / max(visN - 1, 1)
+            val pk = androidx.compose.ui.graphics.Path()
+            var started = false
+            for (kk in 0 until visN) {
+                val v = peak[k0 + kk]
+                if (v < -190f) { started = false; continue }   // 关闭/无数据：断开不连线
+                val x = kk * stepX
+                val y = specH * (1f - (v - dbMin) / dbRange)
+                if (!started) { pk.moveTo(x, y); started = true } else pk.lineTo(x, y)
+            }
+            if (started) {
+                drawPath(pk, peakColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
             }
         }
 

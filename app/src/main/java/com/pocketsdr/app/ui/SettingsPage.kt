@@ -199,6 +199,22 @@ fun SettingsPage(
             }
         }
 
+        // ===== 显示 =====
+        GroupCard("显示") {
+            var peakHold by remember { mutableStateOf(engine.peakHoldEnabled) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("频谱峰值保持", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                Switch(checked = peakHold, onCheckedChange = {
+                    peakHold = it
+                    engine.peakHoldEnabled = it
+                    store.peakHold = it
+                }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFF6D55C)))
+                Spacer(Modifier.width(10.dp))
+                Text("黄线记录出现过的最高电平，弱信号一闪而过也留痕",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
+            }
+        }
+
         // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
         GroupCard("USB 诊断") {
             UsbDiagCard()

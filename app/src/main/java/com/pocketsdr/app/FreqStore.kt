@@ -52,6 +52,11 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("onboardingDone", false)
         set(v) { prefs.edit().putBoolean("onboardingDone", v).apply() }
 
+    /** 频谱峰值保持开关（黄线） */
+    var peakHold: Boolean
+        get() = prefs.getBoolean("peakHold", false)
+        set(v) { prefs.edit().putBoolean("peakHold", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

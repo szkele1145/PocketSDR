@@ -41,6 +41,8 @@ fun RxPage(
     engine: SdrEngine,
     spectrum: FloatArray,
     waterfall: WaterfallBitmap,
+    /** 峰值保持谱线（开关关闭时全为 -200，画不出来） */
+    peak: FloatArray = FloatArray(0),
     status: String,
     signalDb: Float,
     stereoLock: Float,
@@ -110,6 +112,7 @@ fun RxPage(
             SpectrumWaterfall(
                 spectrum = spectrum,
                 waterfall = waterfall,
+                peak = peak,
                 centerFreq = center,
                 tunedFreq = tuned,
                 span = viewSpan,
