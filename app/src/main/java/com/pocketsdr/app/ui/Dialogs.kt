@@ -2,6 +2,7 @@ package com.pocketsdr.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -157,6 +158,11 @@ fun FavoritesDialog(
     var deleteTarget by remember { mutableStateOf<FreqStore.Ch?>(null) }
     var mode by remember { mutableStateOf(engine.mode) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
+    // 排序：按频率（找特定频段）/ 按加入顺序（找最近收听的）
+    var sortByFreq by remember { mutableStateOf(true) }
+    val shownFavorites = remember(favorites, sortByFreq) {
+        if (sortByFreq) favorites.sortedBy { it.freq } else favorites
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -165,17 +171,38 @@ fun FavoritesDialog(
             Column {
                 if (favorites.isEmpty()) {
                     Text("暂无收藏。收听到喜欢的台后点「★ 收藏当前」添加。", fontSize = 13.sp)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("排序", fontSize = 11.sp, color = Color(0xFF5A6B7F))
+                        TextButton(onClick = { sortByFreq = !sortByFreq },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                            Text(if (sortByFreq) "按频率" else "按加入顺序", fontSize = 11.sp,
+                                color = Color(0xFF00E5FF))
+                        }
+                    }
                 }
-                favorites.forEach { ch ->
+                shownFavorites.forEach { ch ->
                     Row(verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()) {
+                        // 模式标签：收藏里混着 FM/AM/NFM/SSB 时，不标模式分不清
+                        val mLabel = SdrEngine.Mode.entries.getOrNull(ch.mode)?.label ?: "?"
                         TextButton(onClick = {
                             engine.tuneTo(ch.freq)
                             engine.selectMode(FreqStore.modeFromIndex(ch.mode))
                             mode = engine.mode
                             tuned = engine.tunedFreq
                             onDismiss()
-                        }) { Text("${ch.name} · ${formatFreq(ch.freq)}", fontSize = 14.sp) }
+                        }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    mLabel,
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF00E5FF),
+                                    modifier = Modifier.padding(end = 5.dp)
+                                )
+                                Text("${ch.name} · ${formatFreq(ch.freq)}", fontSize = 14.sp)
+                            }
+                        }
                         androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                         IconButton(onClick = { renameTarget = ch; renameText = ch.name },
                             modifier = Modifier.size(32.dp)) {
@@ -193,8 +220,10 @@ fun FavoritesDialog(
         },
         confirmButton = {
             TextButton(onClick = {
+                // 收藏名优先用 RDS 电台名，没有 RDS 时退回频率（与主界面收藏行为一致）
+                val label = engine.rds.stationName.trim().ifEmpty { formatFreq(engine.tunedFreq) }
                 store.addFavorite(FreqStore.Ch(
-                    formatFreq(engine.tunedFreq),
+                    label,
                     engine.tunedFreq,
                     FreqStore.modeIndex(engine.mode)))
                 onChange()

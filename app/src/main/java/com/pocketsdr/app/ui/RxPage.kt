@@ -296,8 +296,11 @@ fun RxPage(
                                 if (isFav) {
                                     store.removeFavorite(tuned)
                                 } else {
+                                    // 收藏名优先用 RDS 电台名：看到 "BBC RADIO 1" 存下来
+                                    // 比存 "98.100000 MHz" 有用得多；没有 RDS 时退回频率
+                                    val label = rdsName.trim().ifEmpty { formatFreq(tuned) }
                                     store.addFavorite(FreqStore.Ch(
-                                        formatFreq(tuned), tuned,
+                                        label, tuned,
                                         FreqStore.modeIndex(mode)))
                                 }
                                 favorites = store.getFavorites()
