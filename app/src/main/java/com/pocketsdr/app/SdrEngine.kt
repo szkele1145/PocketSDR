@@ -226,6 +226,13 @@ class SdrEngine private constructor(
     fun dataIdleMs(): Long =
         if (lastDataMs == 0L) -1L else System.currentTimeMillis() - lastDataMs
 
+    /** USB 累计读超时次数（供电不稳/OTG 线接触不良的硬指标） */
+    val usbReadTimeouts: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.totalReadTimeouts ?: 0
+    /** USB 累计端点复位次数（≥1 就发生过断流自救） */
+    val usbResets: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.totalResets ?: 0
+
     // ---------- 公共 API ----------
     fun start() {
         if (running) return

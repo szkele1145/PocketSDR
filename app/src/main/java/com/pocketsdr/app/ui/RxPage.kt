@@ -62,6 +62,8 @@ fun RxPage(
     var volume by remember { mutableStateOf(engine.volume) }
     var mode by remember { mutableStateOf(engine.mode) }
     var squelch by remember { mutableStateOf(engine.squelchDb) }
+    // USB 健康警告（仅真机）：读超时/端点复位是供电与线材问题的直接证据
+    var usbWarn by remember { mutableStateOf<String?>(null) }
     // 信号历史（最近 ~30 秒，250ms 一个点）：架天线时比盯瀑布更直观
     val signalHistory = remember { mutableStateListOf<Float>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
@@ -135,6 +137,18 @@ fun RxPage(
             }
             // 瀑布的 dB→颜色映射必须与谱线同一范围，否则两者色阶对不上
             waterfall.dynamicRange = dbRange
+            // USB 健康：复位说明真的断流过；超时说明供电/线材不稳
+            if (engine.isRealSource) {
+                val resets = engine.usbResets
+                val timeouts = engine.usbReadTimeouts
+                usbWarn = when {
+                    resets > 0 -> "USB 断流 $resets 次（换 OTG 线或换接口）"
+                    timeouts >= 3 -> "USB 读超时 $timeouts 次（供电不稳）"
+                    else -> null
+                }
+            } else {
+                usbWarn = null
+            }
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
@@ -238,6 +252,12 @@ fun RxPage(
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
                                 )
+                                // USB 供电/线材异常直接亮在主界面：真机最常见的翻车原因，
+                                // 只写进 logcat 等于让用户瞎猜「是不是软件坏了」
+                                if (usbWarn != null) {
+                                    Text("⚠ $usbWarn", fontSize = 10.sp,
+                                        color = Color(0xFFFF6B6B), maxLines = 1)
+                                }
                             }
                         }
                     }

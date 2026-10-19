@@ -321,6 +321,24 @@ fun UsbDiagCard(engine: SdrEngine? = null) {
                     fontSize = 10.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace)
             }
             Spacer(Modifier.height(4.dp))
+            // USB 层健康：超时/复位是供电不稳与 OTG 线接触不良的硬指标
+            val timeouts = engine.usbReadTimeouts
+            val resets = engine.usbResets
+            if (timeouts > 0 || resets > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        when {
+                            resets > 0 -> "USB：读超时 $timeouts 次 · 已复位 $resets 次"
+                            else -> "USB：读超时 $timeouts 次"
+                        },
+                        fontSize = 11.sp,
+                        color = if (resets > 0) Color(0xFFFF6B6B) else Color(0xFFF6D55C),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text("供电不足或 OTG 线接触不良。换线/换口，或给手机供电后重试。",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
+            }
         }
         if (entries.isEmpty()) {
             Text("未检测到 USB 设备（插上 OTG 后回到此页）", fontSize = 11.sp, color = Color(0xFF5A6B7F))

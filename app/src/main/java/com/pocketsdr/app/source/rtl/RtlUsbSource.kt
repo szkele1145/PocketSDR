@@ -95,6 +95,17 @@ class RtlUsbSource(
     private var resetCount = 0
     private val maxResets = 3
 
+    // ---------- USB 健康状态（UI 可见）----------
+    /** 累计读超时次数（供电不稳/OTG 线接触不良会持续增长） */
+    @Volatile var totalReadTimeouts = 0
+        private set
+    /** 累计端点复位次数（≥1 就说明断流发生过） */
+    @Volatile var totalResets = 0
+        private set
+    /** 最近一次数据到达时间戳（ms，SystemClock.elapsedRealtime） */
+    @Volatile var lastDataMs = 0L
+        private set
+
     override fun read(out: FloatArray, nSamples: Int): Int {
         if (closed) return -1
         var produced = 0
@@ -104,6 +115,7 @@ class RtlUsbSource(
                 if (n <= 0) {
                     if (closed) return -1
                     readTimeouts++
+                    totalReadTimeouts++
                     if (readTimeouts == 1 || readTimeouts % 20 == 0) {
                         SdrLog.w("USB", "bulk 读超时 x${readTimeouts}（OTG 线/供电问题？）")
                     }
@@ -114,6 +126,7 @@ class RtlUsbSource(
                     if (readTimeouts >= resetAfterTimeouts) {
                         if (resetCount < maxResets) {
                             resetCount++
+                            totalResets++
                             readTimeouts = 0
                             SdrLog.w("USB", "连续无数据，复位采样端点（第 ${resetCount}/${maxResets} 次）")
                             try {
@@ -134,6 +147,7 @@ class RtlUsbSource(
                 readTimeouts = 0
                 usbPos = 0
                 usbLen = n
+                lastDataMs = android.os.SystemClock.elapsedRealtime()
             }
             val avail = (usbLen - usbPos) / 2
             if (avail == 0) { usbPos = usbLen; continue }
