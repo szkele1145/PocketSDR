@@ -98,6 +98,10 @@ fun RxPage(
                 store.lastMode = FreqStore.modeIndex(newMode)
             }
             recording = engine.isRecording
+            // 静噪/音量可能被外部改（真机连接时静噪自动全开），
+            // 轮询期间滑条显示值必须与引擎实际值保持一致，否则「显示 -40 但实际 -100」
+            if (engine.squelchDb != squelch) squelch = engine.squelchDb
+            if (engine.volume != volume) volume = engine.volume
             if (dragBase == null) center = engine.centerFreq
             kotlinx.coroutines.delay(250)
         }
