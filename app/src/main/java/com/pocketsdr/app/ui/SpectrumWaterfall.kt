@@ -15,6 +15,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.sp
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -55,6 +59,7 @@ fun SpectrumWaterfall(
     val peakColor = Color(0xFFF6D55C)
     val specFill = Color(0x3300E5FF)
     val markerColor = Color(0xFFFF5252)
+    val textMeasurer = rememberTextMeasurer()
 
     Canvas(modifier = modifier
         .pointerInput(centerFreq, span) {
@@ -188,6 +193,32 @@ fun SpectrumWaterfall(
         // 边缘频率标签（Canvas 外用 Text 叠加，这里画端点短线）
         drawLine(Color(0x33FFFFFF), Offset(0f, 0f), Offset(0f, h), strokeWidth = 1f)
         drawLine(Color(0x33FFFFFF), Offset(w, 0f), Offset(w, h), strokeWidth = 1f)
+
+        // ---- dB 纵轴网格线（谱区）----
+        // 没有 dB 刻度时，用户看不懂频谱高度代表什么：强台该有多高？噪声底在哪？
+        // 画 4 条参考线，配合左侧文字标签，频谱才可读。
+        if (spectrum.isNotEmpty() || peak.isNotEmpty()) {
+            val dbRange = max(dbMax - dbMin, 1f)
+            val dbTicks = floatArrayOf(0f, -20f, -40f, -60f, -80f)
+            dbTicks.forEach { db ->
+                if (db < dbMin || db > dbMax) return@forEach
+                val y = specH * (1f - (db - dbMin) / dbRange)
+                drawLine(
+                    color = Color(0x22FFFFFF),
+                    start = Offset(0f, y),
+                    end = Offset(w, y),
+                    strokeWidth = 1f
+                )
+                // dB 标签：画在左下角上方一点，避免压住谱线起始段
+                val label = if (db == 0f) "0" else db.toInt().toString()
+                drawText(
+                    textMeasurer = textMeasurer,
+                    text = label,
+                    style = TextStyle(fontSize = 8.sp, color = Color(0x668FA3B8)),
+                    topLeft = Offset(2f, (y - 9f).coerceAtLeast(0f))
+                )
+            }
+        }
 
         // ---- tuned 标记线 ----
         val tunedFrac = ((tunedFreq - centerFreq).toFloat() / span) + 0.5f
