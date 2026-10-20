@@ -83,15 +83,28 @@ function Invoke-Git {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = (& git @GitArgs 2>&1) | Out-String
+        # stdout and stderr are captured SEPARATELY, and git runs exactly ONCE.
+        # Redirecting stderr to a file (instead of 2>&1) keeps git's
+        # diagnostics out of the return value - merging them leaks a wall of
+        # PowerShell error text ("所在 ..." lines) into the transcript.
+        # Running git twice to harvest the streams separately would be a bug:
+        # some git commands have side effects.
+        $errFile = Join-Path $Tmp "git_stderr.txt"
+        if (Test-Path $errFile) { Remove-Item $errFile -Force }
+        $stdout = (& git @GitArgs 2>$errFile) | Out-String
         $code = $LASTEXITCODE
+        $stderr = ""
+        if (Test-Path $errFile) { $stderr = [IO.File]::ReadAllText($errFile) }
     } finally {
         $ErrorActionPreference = $prev
     }
-    if ($code -ne 0 -and $GitArgs[0] -eq "fetch") {
-        Write-Host "    git $($GitArgs -join ' ') failed (exit $code)"
+    if ($code -ne 0) {
+        # Only failures are worth printing, and then only git's own message.
+        $msg = ($stderr -split "`r?`n" | Where-Object { $_.Trim() }) -join " | "
+        if (-not $msg) { $msg = "exit $code" }
+        Write-Host "    git $($GitArgs -join ' ') failed: $msg"
     }
-    return $out
+    return $stdout
 }
 
 function Get-Json {

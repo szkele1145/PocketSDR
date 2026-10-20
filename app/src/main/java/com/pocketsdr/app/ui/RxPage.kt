@@ -38,14 +38,23 @@ import kotlinx.coroutines.launch
  * FM 广播台间隔 100/200kHz，用 100kHz 一格格挪最合适；
  * 航空对讲/业余无线电是 25kHz 频道；
  * 短波台挤得密，要 1kHz 才挪得动。
+ *
+ * [mode] 是这个档位最推荐的接收模式——切到该模式时自动切到这一档，
+ * 用户不用记「航空对讲要用 25k」这种规则。
  */
-private data class TuneStep(val label: String, val hz: Long)
+private data class TuneStep(val label: String, val hz: Long, val modes: List<SdrEngine.Mode>)
 
 private val TuneSteps = listOf(
-    TuneStep("100k", 100_000L),
-    TuneStep("25k", 25_000L),
-    TuneStep("1k", 1_000L)
+    TuneStep("100k", 100_000L, listOf(SdrEngine.Mode.WFM)),
+    // 25k 同时对应航空对讲（AM）和业余/对讲 UHF（NFM）——两边的频道间隔都是 25kHz
+    TuneStep("25k", 25_000L, listOf(SdrEngine.Mode.AM, SdrEngine.Mode.NFM)),
+    TuneStep("1k", 1_000L, listOf(SdrEngine.Mode.USB, SdrEngine.Mode.LSB))
 )
+
+// 步进的合法频段边界：长波 100kHz 到 L 波段 1.7GHz。
+// 越界后硬件会直接拒绝调谐，用户看到的只是「按了没反应」——所以这里先钳住。
+private const val TuneMinHz = 100_000L
+private const val TuneMaxHz = 1_700_000_000L
 
 /**
  * 收音页（横屏主界面）——布局照 SDR# 桌面版：
@@ -153,6 +162,16 @@ fun RxPage(
                 store.lastMode = FreqStore.modeIndex(newMode)
                 // 换模式：不同调制的 dB 尺度不同，历史曲线没有可比性
                 signalHistory.clear()
+                // 步进档位跟着模式走（除非用户自己选过）：
+                // FM 广播台隔 100/200kHz，航空对讲/业余无线电是 25kHz 频道，
+                // 短波 USB/LSB 挤在 1kHz 级别。档位不跟，用户就得自己记规则。
+                if (store.tuneStepAuto) {
+                    val recommended = TuneSteps.indexOfFirst { newMode in it.modes }
+                    if (recommended >= 0 && recommended != tuneStepIdx) {
+                        tuneStepIdx = recommended
+                        store.tuneStepIndex = recommended
+                    }
+                }
             }
             recording = engine.isRecording
             recordingPaused = engine.recordingPaused
@@ -377,9 +396,14 @@ fun RxPage(
                     // 而「点大频率开输入框」那个框还会挡住频谱。
                     // 档位可点，循环 100k → 25k → 1k，选了记在盘上。
                     val step = TuneSteps[tuneStepIdx]
+                    // 步进要钳在合法频段内：一直按 ▶ 会一路走到几 GHz 之外，
+                    // 硬件会拒绝调谐，用户看到的却是「按了没反应」。
+                    val atLow = engine.tunedFreq - step.hz < TuneMinHz
+                    val atHigh = engine.tunedFreq + step.hz > TuneMaxHz
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        StepButton("◀") {
-                            val nt = (engine.tunedFreq - step.hz).coerceAtLeast(0L)
+                        StepButton("◀", dim = atLow) {
+                            val nt = (engine.tunedFreq - step.hz).coerceAtLeast(TuneMinHz)
+                            if (nt == engine.tunedFreq) return@StepButton
                             engine.tuneTo(nt)
                             tuned = nt
                         }
@@ -390,8 +414,18 @@ fun RxPage(
                                 .height(34.dp)
                                 .widthIn(min = 44.dp)
                                 .clickable {
-                                    tuneStepIdx = (tuneStepIdx + 1) % TuneSteps.size
-                                    store.tuneStepIndex = tuneStepIdx
+                                    // 用户亲手选档位 = 显式选择，不再自动跟模式。
+                                    // 想回到自动：再点一圈回到当前模式的推荐档即可
+                                    //（推荐档会重新打开自动，见下）。
+                                    val next = (tuneStepIdx + 1) % TuneSteps.size
+                                    val recommended = TuneSteps.indexOfFirst { mode in it.modes }
+                                    if (recommended >= 0 && next == recommended) {
+                                        store.tuneStepAuto = true
+                                    } else {
+                                        store.tuneStepAuto = false
+                                    }
+                                    tuneStepIdx = next
+                                    store.tuneStepIndex = next
                                 }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -399,13 +433,16 @@ fun RxPage(
                                     step.label,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF8FA3B8),
+                                    // 自动模式青色（跟 UI 主色一致），手动选择后灰——
+                                    // 用户能看出档位是自动推荐的还是自己锁定的
+                                    color = if (store.tuneStepAuto) Color(0xFF00E5FF) else Color(0xFF8FA3B8),
                                     modifier = Modifier.padding(horizontal = 6.dp)
                                 )
                             }
                         }
-                        StepButton("▶") {
-                            val nt = engine.tunedFreq + step.hz
+                        StepButton("▶", dim = atHigh) {
+                            val nt = (engine.tunedFreq + step.hz).coerceAtMost(TuneMaxHz)
+                            if (nt == engine.tunedFreq) return@StepButton
                             engine.tuneTo(nt)
                             tuned = nt
                         }
@@ -798,9 +835,14 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
  * 每个点连同当时的调谐频率一起记录：换了台之后，旧台的强度和新台画在同一条线上
  * 会误导用户（看着像信号突然掉了，其实只是换了个频点）。所以频率一变，曲线就断开。
  */
-/** 步进调谐的单向按钮（◀ / ▶） */
+/**
+ * 步进调谐的单向按钮（◀ / ▶）。
+ *
+ * [dim] = 已到频段边界，按下去不会有任何变化——用灰色告诉用户「到头了」，
+ * 而不是让人对着一个没反应的按钮反复点。
+ */
 @Composable
-private fun StepButton(glyph: String, onClick: () -> Unit) {
+private fun StepButton(glyph: String, dim: Boolean = false, onClick: () -> Unit) {
     Surface(
         color = Color(0xFF1A2230),
         shape = RoundedCornerShape(8.dp),
@@ -814,7 +856,7 @@ private fun StepButton(glyph: String, onClick: () -> Unit) {
                 glyph,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF00E5FF),
+                color = if (dim) Color(0xFF3C4A5A) else Color(0xFF00E5FF),
                 modifier = Modifier.padding(horizontal = 6.dp)
             )
         }

@@ -151,6 +151,17 @@ class FreqStore(private val context: Context) {
         get() = prefs.getInt("tuneStepIndex", 0)
         set(v) { prefs.edit().putInt("tuneStepIndex", v).apply() }
 
+    /**
+     * 步进档位是否跟随接收模式自动调整。
+     *
+     * 默认 true：FM 广播台隔 100/200kHz，航空对讲和业余无线电是 25kHz 频道，
+     * 短波（USB/LSB）则挤在 1kHz 级别——档位跟着模式走，用户永远不用记规则。
+     * 一旦用户自己点了档位，就转成 false，尊重用户的显式选择。
+     */
+    var tuneStepAuto: Boolean
+        get() = prefs.getBoolean("tuneStepAuto", true)
+        set(v) { prefs.edit().putBoolean("tuneStepAuto", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()
