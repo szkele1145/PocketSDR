@@ -165,28 +165,33 @@ fun SettingsPage(
         }
         if (engine.isRealSource) {
             GroupCard("RTL 硬件") {
-                var manualGain by remember { mutableStateOf(false) }
-                var gainIdx by remember { mutableStateOf(14f) }
-                var hfDirect by remember { mutableStateOf(false) }
-                var offTune by remember { mutableStateOf(false) }
+                // 初始值从 store 读，改动立刻写回：以前这几个都是 remember 本地态，
+                // 退出应用再进来全部回到默认值，用户每次都要重调一遍。
+                var manualGain by remember { mutableStateOf(store.hwManualGain) }
+                var gainIdx by remember { mutableStateOf(store.hwGainIndex.toFloat()) }
+                var hfDirect by remember { mutableStateOf(store.hwDirectSampling != 0) }
+                var offTune by remember { mutableStateOf(store.hwOffsetTuning) }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("LNA 增益", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = manualGain, onCheckedChange = {
-                        manualGain = it; engine.setHardwareGainMode(it)
+                        manualGain = it
+                        store.hwManualGain = it
+                        engine.setHardwareGainMode(it)
                     }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
                     if (manualGain) {
                         Slider(
                             value = gainIdx,
                             onValueChange = {
                                 gainIdx = it
-                                val g = engine.lnaGains[it.toInt().coerceIn(0, engine.lnaGains.size - 1)]
-                                engine.setHardwareLnaGain(g)
+                                val idx = it.toInt().coerceIn(0, engine.lnaGains.size - 1)
+                                store.hwGainIndex = idx
+                                engine.setHardwareLnaGain(engine.lnaGains[idx])
                             },
                             valueRange = 0f..(engine.lnaGains.size - 1).toFloat(),
                             modifier = Modifier.weight(1f),
                             colors = SliderDefaults.colors(thumbColor = Color(0xFFF6D55C))
                         )
-                        Text("%.1fdB".format(engine.lnaGains[gainIdx.toInt()] / 10f),
+                        Text("%.1fdB".format(engine.lnaGains[gainIdx.toInt().coerceIn(0, engine.lnaGains.size - 1)] / 10f),
                             fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
                     }
                 }
@@ -194,11 +199,13 @@ fun SettingsPage(
                     Text("HF 直采", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = hfDirect, onCheckedChange = {
                         hfDirect = engine.setHardwareDirectSampling(if (it) 1 else 0)
+                        store.hwDirectSampling = if (hfDirect) 1 else 0
                     }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFF6D55C)))
                     Spacer(Modifier.width(12.dp))
                     Text("偏移调谐", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = offTune, onCheckedChange = {
                         offTune = engine.setHardwareOffsetTuning(it)
+                        store.hwOffsetTuning = offTune
                     }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7DF3FF)))
                     Spacer(Modifier.weight(1f))
                     Text("%.3fM".format(engine.sampleRate / 1e6), fontSize = 11.sp,
@@ -212,7 +219,9 @@ fun SettingsPage(
                         value = ppm,
                         onValueChange = {
                             ppm = it
-                            engine.setHardwarePpm(Math.round(it))
+                            val v = Math.round(it)
+                            store.hwPpm = v
+                            engine.setHardwarePpm(v)
                         },
                         valueRange = -100f..100f,
                         modifier = Modifier.weight(1f),

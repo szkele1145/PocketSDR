@@ -361,6 +361,18 @@ class MainActivity : ComponentActivity(), UiBridge {
         // 静噪要跟着恢复：以前不存盘，真机连接时被强制拉到 -100，用户调好的门限
         // 一重启就没了，底噪全放出来。现在以存盘值为准（见下面首次连接的例外）。
         eng.squelchDb = store.lastSquelch
+        // 硬件设置同样要恢复：手动增益/增益档位/直采/偏移调谐/PPM 以前全是
+        // 设置页里的本地态，退出应用就没了，用户每次都得重调一遍。
+        if (eng.isRealSource) {
+            eng.setHardwareGainMode(store.hwManualGain)
+            if (store.hwManualGain) {
+                val idx = store.hwGainIndex.coerceIn(0, eng.lnaGains.size - 1)
+                eng.setHardwareLnaGain(eng.lnaGains[idx])
+            }
+            if (store.hwDirectSampling != 0) eng.setHardwareDirectSampling(store.hwDirectSampling)
+            if (store.hwOffsetTuning) eng.setHardwareOffsetTuning(true)
+            if (store.hwPpm != 0) eng.setHardwarePpm(store.hwPpm)
+        }
     }
 
     /** 白名单判定统一收口到 UsbDiag（与 device_filter.xml 对齐） */

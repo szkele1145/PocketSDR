@@ -82,6 +82,35 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("squelchTuned", false)
         set(v) { prefs.edit().putBoolean("squelchTuned", v).apply() }
 
+    // ---------- 硬件设置 ----------
+    // 这几个以前全是 remember 本地态：用户真机上把增益调到刚好的位置，
+    // 退出应用再进来又回到默认值，等于每次都要重调一遍。
+
+    /** 手动增益模式（true = 用手动 LNA 档位，false = 自动） */
+    var hwManualGain: Boolean
+        get() = prefs.getBoolean("hwManualGain", false)
+        set(v) { prefs.edit().putBoolean("hwManualGain", v).apply() }
+
+    /** LNA 增益档位索引（对应 SdrEngine.lnaGains 的下标） */
+    var hwGainIndex: Int
+        get() = prefs.getInt("hwGainIndex", 14)
+        set(v) { prefs.edit().putInt("hwGainIndex", v).apply() }
+
+    /** HF 直接采样模式：0 关 / 1 I-ADC / 2 Q-ADC */
+    var hwDirectSampling: Int
+        get() = prefs.getInt("hwDirectSampling", 0)
+        set(v) { prefs.edit().putInt("hwDirectSampling", v).apply() }
+
+    /** 偏移调谐（offset tuning，主要给 AM/短波用） */
+    var hwOffsetTuning: Boolean
+        get() = prefs.getBoolean("hwOffsetTuning", false)
+        set(v) { prefs.edit().putBoolean("hwOffsetTuning", v).apply() }
+
+    /** PPM 频率校准值 */
+    var hwPpm: Int
+        get() = prefs.getInt("hwPpm", 0)
+        set(v) { prefs.edit().putInt("hwPpm", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()
