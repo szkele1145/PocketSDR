@@ -85,6 +85,8 @@ fun RxPage(
     val signalHistory = remember { mutableStateListOf<Pair<Long, Float>>() }
     var recording by remember { mutableStateOf(engine.isRecording) }
     var recordingPaused by remember { mutableStateOf(false) }
+    /** 录音失败原因（磁盘满等）；非空时显示在录音按钮旁 */
+    var recError by remember { mutableStateOf<String?>(null) }
     var muted by remember { mutableStateOf(engine.muted) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
@@ -148,6 +150,9 @@ fun RxPage(
             }
             recording = engine.isRecording
             recordingPaused = engine.recordingPaused
+            // 录音失败（磁盘满/存储被占）会自动停止并记下原因，
+            // 界面上要能看到——否则用户只发现「录音自己停了」，不知道为什么。
+            if (engine.recordingError != null) recError = engine.recordingError
             // 静噪/音量可能被外部改（真机连接时静噪自动全开），
             // 轮询期间滑条显示值必须与引擎实际值保持一致，否则「显示 -40 但实际 -100」
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
@@ -566,6 +571,11 @@ fun RxPage(
                             Text("■ 停", fontSize = 11.sp, fontWeight = FontWeight.Bold,
                                 color = Color(0xFF5A6B7F))
                         }
+                    }
+                    // 录音失败原因：写盘失败会自动停止录音，
+                    // 不说的话用户只发现「录着录着自己停了」。
+                    recError?.let { e ->
+                        Text("⚠ $e", fontSize = 10.sp, color = Color(0xFFFF6B6B))
                     }
                 }
 

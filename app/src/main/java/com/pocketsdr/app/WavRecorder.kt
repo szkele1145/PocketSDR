@@ -20,6 +20,20 @@ class WavRecorder(private val context: Context) {
     @Volatile var filePath: String? = null
         private set
 
+    /**
+     * 录音期间发生的写入失败次数。
+     *
+     * 磁盘满、存储被其它应用占满、SD 卡拔出——这些都会让 write 抛异常。
+     * 以前异常直接冒到 DSP 线程（写调用没有 try/catch），后果是
+     * **DSP 线程死掉**：频谱冻结、音频停止，而界面还显示「录音中」。
+     */
+    @Volatile var writeFailures: Int = 0
+        private set
+
+    /** 最近一次失败原因（null = 没失败过）；用于在界面上说明为什么停了 */
+    @Volatile var lastError: String? = null
+        private set
+
     private var raf: RandomAccessFile? = null
     private var dataBytes = 0L
     private var sampleRate = 32_000
@@ -43,9 +57,19 @@ class WavRecorder(private val context: Context) {
             buf.reset()
             filePath = f.absolutePath
             recording = true
+            lastError = null
+            writeFailures = 0
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            // 失败原因必须留下来：以前只返回 false，用户只知道「没开始」，
+            // 不知道是存储空间不足还是目录建不出来。
+            lastError = "无法创建录音文件：${e.message?.takeIf { it.isNotBlank() } ?: "存储不可用"}"
+            SdrLog.e("REC", lastError!!)
+            recording = false
+            false
+        }
     }
+
     /** DSP 线程调用：追加一帧立体声 16bit。暂停时直接丢弃（WAV 是连续流，没有暂停语义）。 */
     fun write(frame: ShortArray, count: Int) {
         if (!recording || paused) return
@@ -64,13 +88,27 @@ class WavRecorder(private val context: Context) {
 
     private fun flush() = synchronized(ioLock) { flushLocked() }
 
+    /**
+     * 落盘。失败（磁盘满/存储被占）时**必须吞掉异常**：
+     * 这个方法在 DSP 线程上被调用，异常冒出去会直接杀死 DSP 循环，
+     * 现象是频谱冻结但界面毫无提示。
+     */
     private fun flushLocked() {
         val r = raf ?: return
         val data = buf.toByteArray()
         if (data.isEmpty()) return
-        r.write(data)
-        dataBytes += data.size
-        buf.reset()
+        try {
+            r.write(data)
+            dataBytes += data.size
+            buf.reset()
+        } catch (e: Exception) {
+            writeFailures++
+            lastError = "录音写入失败：${e.message?.takeIf { it.isNotBlank() } ?: "存储空间不足或被占用"}"
+            SdrLog.e("REC", "$lastError（已写 ${dataBytes / 1024} KB）")
+            // 停止录音：继续写只会一直失败，而且文件已经不完整了
+            recording = false
+            buf.reset()
+        }
     }
 
     /** 停止并回填 WAV 头 */
@@ -85,7 +123,12 @@ class WavRecorder(private val context: Context) {
                 r.seek(0)
                 val header = makeHeader(dataBytes, sampleRate)
                 r.write(header)
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                // 回填失败 = 文件头是坏的，播放器打不开。
+                // 以前直接吞掉，用户看到「录音已保存」，打开却是坏文件。
+                lastError = "录音文件头写入失败，文件可能无法播放：${e.message?.takeIf { it.isNotBlank() } ?: "存储错误"}"
+                SdrLog.e("REC", lastError!!)
+            }
             try { r.close() } catch (_: Exception) {}
             raf = null
             return filePath

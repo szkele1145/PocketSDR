@@ -227,13 +227,37 @@ class SdrEngine private constructor(
 
     // ---------- 录音 ----------
     private var recorder: WavRecorder? = null
+
+    /**
+     * 录音相关的失败原因（null = 没有失败）。
+     *
+     * 以前录音写盘失败会让异常冒到 DSP 线程、把整个 DSP 循环打死，
+     * 而界面还显示「录音中」——频谱冻结、声音停了，用户一脸懵。
+     * 现在写失败会被接住，录音自动停止，这里记下原因给界面显示。
+     */
+    @Volatile var recordingError: String? = null
+        private set
+
+    /** AudioTrack 写入失败次数（track 被释放/停止后写入会返回负错误码） */
+    @Volatile var audioWriteFailures: Int = 0
+        private set
+
     /** 开始录音；返回是否成功 */
     fun startRecording(context: android.content.Context): Boolean {
         val r = recorder ?: WavRecorder(context).also { recorder = it }
-        return r.start(audioRate, _tunedFreq)
+        recordingError = null
+        val ok = r.start(audioRate, _tunedFreq)
+        if (!ok) recordingError = r.lastError ?: "无法开始录音（存储不可用）"
+        return ok
     }
 
-    fun stopRecording(): String? = recorder?.stop()
+    fun stopRecording(): String? {
+        val r = recorder ?: return null
+        val path = r.stop()
+        // 停止时才发现写盘失败（WAV 头没回填上）：必须说出来
+        if (r.lastError != null) recordingError = r.lastError
+        return path
+    }
 
     /** 暂停录音（丢弃后续帧，文件不增长；WAV 无暂停语义，恢复后同一文件继续追加） */
     fun pauseRecording() {
@@ -322,6 +346,10 @@ class SdrEngine private constructor(
         // 调谐失败：>0 说明发生过「频率数字变了、声音没变」的情况
         sb.append("  调谐失败：").append(rtl?.tuneFailures ?: 0).append(" 次\n")
         sb.append("  硬件设置失败：").append(rtl?.hwSettingFailures ?: 0).append(" 次\n")
+        // 音频写失败：AudioTrack 失效后声音会消失，但频谱照常显示
+        sb.append("  音频写失败：").append(audioWriteFailures).append(" 次\n")
+        // 录音写失败：磁盘满/存储被占时录音会自动停止
+        sb.append("  录音写失败：").append(recorder?.writeFailures ?: 0).append(" 次\n")
         sb.append("  仿真源：").append(if (!isRealSource) "正常" else "不适用").append('\n')
         return sb.toString()
     }
@@ -347,7 +375,16 @@ class SdrEngine private constructor(
         // 录音收尾（WAV 头回填），在杀线程前进行
         recorder?.let { r ->
             val path = r.stop()
-            if (path != null) ui.pushStatus("录音已保存: ${path.substringAfterLast('\\').substringAfterLast('/')}")
+            if (path != null) {
+                // 写盘失败过的录音不能说「已保存」——文件可能缺数据或头写不进去。
+                val err = r.lastError
+                if (err != null) {
+                    recordingError = err
+                    ui.pushStatus("⚠ $err")
+                } else {
+                    ui.pushStatus("录音已保存: ${path.substringAfterLast('\\').substringAfterLast('/')}")
+                }
+            }
         }
         dspThread?.join(2000)
         dspThread = null
@@ -464,6 +501,27 @@ class SdrEngine private constructor(
         ssbAgc.reset(); narrowAgc.reset()
         stereo.reset()
         ncoPhase = 0.0
+    }
+
+    /**
+     * 写音频到 AudioTrack，并把录音数据落盘。
+     *
+     * AudioTrack.write 返回负数表示失败（track 被 stop/release 之后会这样）。
+     * 以前返回值被丢掉：声音已经没了，但频谱、信号强度、「运行中」全都照常显示，
+     * 用户只看到「有信号却没声音」且没有任何提示。
+     * 现在第一次失败就记下来并说明。
+     */
+    private fun emitAudio(track: android.media.AudioTrack, frames: Int) {
+        if (frames <= 0) return
+        val n = track.write(audioFrames, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
+        if (n < 0) {
+            audioWriteFailures++
+            if (audioWriteFailures == 1) {
+                SdrLog.e("DSP", "音频写入失败（$n）——AudioTrack 可能已失效")
+                ui.pushStatus("⚠ 音频输出已失效（写入失败 $audioWriteFailures 次），请重新打开应用")
+            }
+        }
+        recorder?.write(audioFrames, frames * 2)
     }
 
     // ---------- DSP 主循环 ----------
@@ -610,8 +668,7 @@ class SdrEngine private constructor(
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
         if (frames > 0 && squelchOpen && !muted) {
-            track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
-            recorder?.write(audioFrames, frames * 2)
+            emitAudio(track, frames)
         }
     }
 
@@ -648,8 +705,7 @@ class SdrEngine private constructor(
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
         if (frames > 0 && squelchOpen && !muted) {
-            track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
-            recorder?.write(audioFrames, frames * 2)
+            emitAudio(track, frames)
         }
     }
 
@@ -685,8 +741,7 @@ class SdrEngine private constructor(
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
         if (frames > 0 && squelchOpen && !muted) {
-            track.write(audioFrames, 0, frames * 2, AudioTrack.WRITE_BLOCKING)
-            recorder?.write(audioFrames, frames * 2)
+            emitAudio(track, frames)
         }
     }
 
