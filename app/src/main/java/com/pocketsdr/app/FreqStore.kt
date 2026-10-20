@@ -131,6 +131,16 @@ class FreqStore(private val context: Context) {
         get() = prefs.getLong("viewSpan", 0L)
         set(v) { prefs.edit().putLong("viewSpan", v).apply() }
 
+    /**
+     * 收藏列表排序方式：true = 按频率，false = 按加入顺序。
+     *
+     * 存下来是因为这是个使用习惯——习惯按频率找台的人，
+     * 每次进来都要多点一下才能回到按频率排序。
+     */
+    var favSortByFreq: Boolean
+        get() = prefs.getBoolean("favSortByFreq", true)
+        set(v) { prefs.edit().putBoolean("favSortByFreq", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

@@ -5,9 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -159,7 +163,10 @@ fun FavoritesDialog(
     var mode by remember { mutableStateOf(engine.mode) }
     var tuned by remember { mutableStateOf(engine.tunedFreq) }
     // 排序：按频率（找特定频段）/ 按加入顺序（找最近收听的）
-    var sortByFreq by remember { mutableStateOf(true) }
+    // 从 store 读初值：排序是使用习惯，每次进来重设很烦
+    var sortByFreq by remember { mutableStateOf(store.favSortByFreq) }
+    /** 正在试听的收藏台（点收藏项只调谐、不关窗） */
+    var audition by remember { mutableStateOf<Long?>(null) }
     val shownFavorites = remember(favorites, sortByFreq) {
         if (sortByFreq) favorites.sortedBy { it.freq } else favorites
     }
@@ -174,45 +181,61 @@ fun FavoritesDialog(
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("排序", fontSize = 11.sp, color = Color(0xFF5A6B7F))
-                        TextButton(onClick = { sortByFreq = !sortByFreq },
+                        TextButton(onClick = {
+                            sortByFreq = !sortByFreq
+                            store.favSortByFreq = sortByFreq
+                        },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                             Text(if (sortByFreq) "按频率" else "按加入顺序", fontSize = 11.sp,
                                 color = Color(0xFF00E5FF))
                         }
                     }
+                    // 正在试听：点收藏项只切台不关窗，可以连续对比多个台
+                    audition?.let { f ->
+                        Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
+                            fontSize = 12.sp, color = Color(0xFF00E5FF))
+                    }
                 }
-                shownFavorites.forEach { ch ->
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()) {
-                        // 模式标签：收藏里混着 FM/AM/NFM/SSB 时，不标模式分不清
-                        val mLabel = SdrEngine.Mode.entries.getOrNull(ch.mode)?.label ?: "?"
-                        TextButton(onClick = {
-                            engine.tuneTo(ch.freq)
-                            engine.selectMode(FreqStore.modeFromIndex(ch.mode))
-                            mode = engine.mode
-                            tuned = engine.tunedFreq
-                            onDismiss()
-                        }) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    mLabel,
-                                    fontSize = 10.sp,
-                                    color = Color(0xFF00E5FF),
-                                    modifier = Modifier.padding(end = 5.dp)
-                                )
-                                Text("${ch.name} · ${formatFreq(ch.freq)}", fontSize = 14.sp)
+                // 列表必须能滚：收藏多了以后超出对话框的部分会被直接裁掉，
+                // 用户根本看不到后面的条目，也就没法跳台或删除。
+                // 限高 300.dp，条目再多也只占这一块。
+                Column(
+                    Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())
+                ) {
+                    shownFavorites.forEach { ch ->
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()) {
+                            // 模式标签：收藏里混着 FM/AM/NFM/SSB 时，不标模式分不清
+                            val mLabel = SdrEngine.Mode.entries.getOrNull(ch.mode)?.label ?: "?"
+                            TextButton(onClick = {
+                                engine.tuneTo(ch.freq)
+                                engine.selectMode(FreqStore.modeFromIndex(ch.mode))
+                                mode = engine.mode
+                                tuned = engine.tunedFreq
+                                // 不关窗：可以连续试听多个收藏台，对比着选
+                                audition = ch.freq
+                            }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        mLabel,
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF00E5FF),
+                                        modifier = Modifier.padding(end = 5.dp)
+                                    )
+                                    Text("${ch.name} · ${formatFreq(ch.freq)}", fontSize = 14.sp)
+                                }
                             }
-                        }
-                        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-                        IconButton(onClick = { renameTarget = ch; renameText = ch.name },
-                            modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Filled.Edit, "改名", tint = Color(0xFF5A6B7F),
-                                modifier = Modifier.size(16.dp))
-                        }
-                        IconButton(onClick = { deleteTarget = ch },
-                            modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F),
-                                modifier = Modifier.size(16.dp))
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                            IconButton(onClick = { renameTarget = ch; renameText = ch.name },
+                                modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Filled.Edit, "改名", tint = Color(0xFF5A6B7F),
+                                    modifier = Modifier.size(16.dp))
+                            }
+                            IconButton(onClick = { deleteTarget = ch },
+                                modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F),
+                                    modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
