@@ -79,20 +79,46 @@ function Invoke-Gh {
 # variable and shadowing it makes git receive an empty argument list (git then
 # prints its usage text and exits 1).
 function Invoke-Git {
-    param([string[]]$GitArgs)
+    param([string[]]$GitArgs, [switch]$NoRetry)
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $errFile = Join-Path $Tmp "git_stderr.txt"
+    $stdout = ""
+    $code = -1
+    $maxTry = if ($NoRetry) { 1 } else { 3 }
     try {
         # stdout and stderr are captured SEPARATELY, and git runs exactly ONCE.
         # Redirecting stderr to a file (instead of 2>&1) keeps git's
         # diagnostics out of the return value - merging them leaks a wall of
-        # PowerShell error text ("所在 ..." lines) into the transcript.
+        # PowerShell error text ("Location ..." lines) into the transcript.
         # Running git twice to harvest the streams separately would be a bug:
         # some git commands have side effects.
-        $errFile = Join-Path $Tmp "git_stderr.txt"
-        if (Test-Path $errFile) { Remove-Item $errFile -Force }
-        $stdout = (& git @GitArgs 2>$errFile) | Out-String
-        $code = $LASTEXITCODE
+        #
+        # The whole block is retried: spawning git.exe can fail with a
+        # transient "Access is denied" (it happened on v2.57.0 and killed a
+        # publish between step 5 and step 7). Retrying the SAME command is
+        # safe for the read-only commands used here.
+        for ($try = 1; $try -le $maxTry; $try++) {
+            if (Test-Path $errFile) { Remove-Item $errFile -Force }
+            $stdout = ""
+            try {
+                $stdout = (& git @GitArgs 2>$errFile) | Out-String
+                $code = $LASTEXITCODE
+            } catch {
+                # git.exe could not even be started (Access is denied / file
+                # locked). Treat it like a failed attempt and retry.
+                $stdout = ""
+                $code = -1
+                Write-Host "    git $($GitArgs -join ' ') could not start (try $try), retrying"
+                Start-Sleep -Seconds 3
+                continue
+            }
+            if ($code -eq 0) { break }
+            if ($try -lt $maxTry) {
+                Write-Host "    git $($GitArgs -join ' ') failed (try $try), retrying"
+                Start-Sleep -Seconds 3
+            }
+        }
         $stderr = ""
         if (Test-Path $errFile) { $stderr = [IO.File]::ReadAllText($errFile) }
     } finally {
@@ -139,7 +165,7 @@ function Get-Json {
 function Restore-Stash {
     $list = Invoke-Git @("stash", "list")
     if (-not $list.Trim()) { return }
-    Invoke-Git @("stash", "pop") | Out-Null
+    Invoke-Git @("stash", "pop") -NoRetry | Out-Null
     $unmerged = @((Invoke-Git @("diff", "--name-only", "--diff-filter=U")) -split "`r?`n" | Where-Object { $_.Trim() })
     if ($unmerged.Count -gt 0) {
         Write-Host "    $($unmerged.Count) conflict(s) after stash pop; keeping published version"
@@ -196,25 +222,52 @@ if (@($missing).Count -gt 0) { throw "New tree lost files: $($missing -join ', '
 Write-Host "    new tree $treeSha  $($newPaths.Count) files (baseline $($basePaths.Count), none missing)"
 
 Write-Host "==> 4/8 Create commit"
-[IO.File]::WriteAllText("$Tmp\commit.json",
-    (ConvertTo-Json -InputObject @{ message = $Message; tree = $treeSha; parents = @($baseCommit) } -Depth 4), $Utf8NoBom)
-$resp = Invoke-Gh "$ApiBase/git/commits" -Method POST -BodyFile "$Tmp\commit.json"
-$commitSha = [regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value
-if (-not $commitSha) { throw "Commit failed: $resp" }
+# Idempotent resume: if a previous run already pushed a commit with THIS tree
+# on top of the SAME baseline (it died between step 5 and step 7 - e.g. a
+# transient "git.exe Access is denied" in step 6), re-creating the commit
+# would stack a content-identical duplicate on top of it. Detect that case
+# and reuse the existing commit instead.
+$commitSha = ""
+if ($baseTree -eq $treeSha) {
+    # The files to publish are byte-identical with what main already has:
+    # nothing to commit, reuse the current head.
+    $commitSha = $baseCommit
+    Write-Host "    tree unchanged, reusing main head $commitSha"
+} else {
+    $candidates = Get-Json "$ApiBase/commits/main`?per_page=1"
+    if ($candidates.commit.tree.sha -eq $treeSha) {
+        $commitSha = $candidates.sha
+        Write-Host "    found existing commit with this tree, reusing $commitSha (resume after partial publish)"
+    }
+}
+if (-not $commitSha) {
+    [IO.File]::WriteAllText("$Tmp\commit.json",
+        (ConvertTo-Json -InputObject @{ message = $Message; tree = $treeSha; parents = @($baseCommit) } -Depth 4), $Utf8NoBom)
+    $resp = Invoke-Gh "$ApiBase/git/commits" -Method POST -BodyFile "$Tmp\commit.json"
+    $commitSha = [regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value
+    if (-not $commitSha) { throw "Commit failed: $resp" }
+}
 Write-Host "    commit $commitSha"
 
 Write-Host "==> 5/8 Update main"
-[IO.File]::WriteAllText("$Tmp\ref.json",
-    (ConvertTo-Json -InputObject @{ sha = $commitSha; force = $false } -Depth 3), $Utf8NoBom)
-$ok = $false
-for ($i = 1; $i -le 3; $i++) {
-    $resp = Invoke-Gh "$ApiBase/git/refs/heads/main" -Method PATCH -BodyFile "$Tmp\ref.json"
-    if ([regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value -eq $commitSha) {
-        $ok = $true; Write-Host "    updated (try $i)"; break
+# Skip if main already points at the target commit (resume after a partial
+# publish that died between step 5 and step 7).
+$mainNow = (Get-Json "$ApiBase/branches/main").commit.sha
+if ($mainNow -eq $commitSha) {
+    Write-Host "    main already at $commitSha, nothing to update"
+} else {
+    [IO.File]::WriteAllText("$Tmp\ref.json",
+        (ConvertTo-Json -InputObject @{ sha = $commitSha; force = $false } -Depth 3), $Utf8NoBom)
+    $ok = $false
+    for ($i = 1; $i -le 3; $i++) {
+        $resp = Invoke-Gh "$ApiBase/git/refs/heads/main" -Method PATCH -BodyFile "$Tmp\ref.json"
+        if ([regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value -eq $commitSha) {
+            $ok = $true; Write-Host "    updated (try $i)"; break
+        }
+        Write-Host "    try $i failed, retrying"; Start-Sleep -Seconds 4
     }
-    Write-Host "    try $i failed, retrying"; Start-Sleep -Seconds 4
+    if (-not $ok) { throw "Failed to update main" }
 }
-if (-not $ok) { throw "Failed to update main" }
 
 Write-Host "==> 6/8 Verify remote tree matches local"
 $finalCommit = Get-Json "$ApiBase/commits/main"
@@ -247,14 +300,21 @@ if (@($bad).Count -gt 0) { throw "Remote does not match local:`n$($bad -join "`n
 Write-Host "    verified: $($tracked.Count) files match"
 
 Write-Host "==> 7/8 Create release and upload APK"
-[IO.File]::WriteAllText("$Tmp\relbody.json", (ConvertTo-Json -InputObject @{
-    tag_name = $Tag; target_commitish = "main"; name = $ReleaseName
-    body = $ReleaseBody; draft = $false; prerelease = $false
-} -Depth 4), $Utf8NoBom)
-$resp = Invoke-Gh "$ApiBase/releases" -Method POST -BodyFile "$Tmp\relbody.json"
-$releaseId = [regex]::Match($resp, '"id":\s*(\d+)').Groups[1].Value
-if (-not $releaseId) { throw "Release creation failed: $resp" }
-Write-Host "    release $releaseId"
+# Idempotent: a partial previous run may already have created the release.
+$existing = Get-Json "$ApiBase/releases/tags/$Tag"
+if ($existing.tag_name -eq $Tag) {
+    $releaseId = $existing.id
+    Write-Host "    release $Tag already exists (id $releaseId), reusing it"
+} else {
+    [IO.File]::WriteAllText("$Tmp\relbody.json", (ConvertTo-Json -InputObject @{
+        tag_name = $Tag; target_commitish = "main"; name = $ReleaseName
+        body = $ReleaseBody; draft = $false; prerelease = $false
+    } -Depth 4), $Utf8NoBom)
+    $resp = Invoke-Gh "$ApiBase/releases" -Method POST -BodyFile "$Tmp\relbody.json"
+    $releaseId = [regex]::Match($resp, '"id":\s*(\d+)').Groups[1].Value
+    if (-not $releaseId) { throw "Release creation failed: $resp" }
+    Write-Host "    release $releaseId"
+}
 
 $apkSrc = Join-Path $Repo "app\build\outputs\apk\debug\app-debug.apk"
 if (-not (Test-Path $apkSrc)) { throw "APK not found: $apkSrc (run assembleDebug first)" }
@@ -299,7 +359,7 @@ try {
     $dirty = @((Invoke-Git @("status", "--porcelain")) -split "`r?`n" | Where-Object { $_.Trim() })
     if ($dirty.Count -gt 0) {
         Write-Host "    $($dirty.Count) uncommitted change(s), stashing"
-        Invoke-Git @("stash", "push", "-u", "-m", "publish.ps1 auto-stash") | Out-Null
+        Invoke-Git @("stash", "push", "-u", "-m", "publish.ps1 auto-stash") -NoRetry | Out-Null
     }
     $fetched = $false
     for ($i = 1; $i -le 3; $i++) {
@@ -309,7 +369,7 @@ try {
         Start-Sleep -Seconds 5
     }
     if ($fetched) {
-        Invoke-Git @("reset", "--hard", "origin/main") | Out-Null
+        Invoke-Git @("reset", "--hard", "origin/main") -NoRetry | Out-Null
         # Pop after the reset: the stash base is the OLD head, so git does a
         # 3-way merge against a stale base and may report conflicts. The stashed
         # content is already IN the new commit, so "ours" (the new HEAD) is the
@@ -330,7 +390,7 @@ try {
         $remoteParent = @($rc.parents)[0].sha
         Write-Host "    remote tree   $remoteTree"
         Write-Host "    remote parent $remoteParent"
-        Invoke-Git @("add", "-A") | Out-Null
+        Invoke-Git @("add", "-A") -NoRetry | Out-Null
         $localTree = (Invoke-Git @("write-tree")).Trim()
         Write-Host "    local tree    $localTree"
         if ($localTree -ne $remoteTree) {
@@ -347,7 +407,7 @@ try {
         # published one (same tree + parent + author + committer + message).
         $localCommit = (Invoke-Git @("commit-tree", $remoteTree, "-p", $remoteParent, "-m", $rc.message)).Trim()
         Write-Host "    local commit $localCommit (remote $commitSha)"
-        Invoke-Git @("reset", "--hard", $localCommit) | Out-Null
+        Invoke-Git @("reset", "--hard", $localCommit) -NoRetry | Out-Null
     }
 } finally { Pop-Location }
 $headShort = (Invoke-Git @("-C", $Repo, "rev-parse", "--short", "HEAD")).Trim()
