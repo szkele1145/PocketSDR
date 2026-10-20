@@ -25,6 +25,15 @@ class RtlUsbSource(
     /** 探测到的 tuner 名称（FC0013 / R820T / UNKNOWN），供自检报告展示 */
     val tunerName: String get() = tunerType.name
 
+    /**
+     * I2C 累计重试次数。
+     *
+     * 这是 USB 链路稳定性的硬指标：0 = 一次都没失败过（链路很稳）；
+     * 偶发几次 = 供电/接触有轻微抖动但被重试救回来了；
+     * 几十上百次 = 供电不足或 OTG 线接触不良，该换线了。
+     */
+    val i2cRetries: Int get() = rtl?.i2cRetryCount ?: 0
+
     /** USB 设备标识：VID:PID + 产品名，自检报告用 */
     val usbDeviceInfo: String
         get() = "VID=%04X PID=%04X %s".format(

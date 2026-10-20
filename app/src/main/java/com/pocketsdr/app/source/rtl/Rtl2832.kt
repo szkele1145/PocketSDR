@@ -154,15 +154,46 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
         return if (r >= 0) buf else null
     }
 
+    // ---------- I2C 重试 ----------
+    // 廉价 RTL 棒 + 手机 OTG 的组合上，USB 控制传输偶发失败是常态（供电抖动、
+    // 线接触不良、内核 USB 栈繁忙）。librtlsdr 在 rtlsdr_i2c_write_bin/read 里
+    // 也做了重试。没有重试的话，一次瞬时抖动就会让整个连接以
+    // 「FC0013 初始化失败」告终——而硬件其实好好的，只是那一次没传过去。
+    private val I2C_RETRIES = 3
+
+    /** 累计 I2C 重试次数：自检报告里能看到，就能判断 USB 链路稳不稳 */
+    @Volatile var i2cRetryCount = 0
+        private set
+
+    private fun i2cRetry(what: String, attempt: Int) {
+        i2cRetryCount++
+        SdrLog.i("RTL", "I2C $what 失败，重试 ${attempt + 1}/$I2C_RETRIES")
+        try { Thread.sleep(5) } catch (_: InterruptedException) {}
+    }
+
     fun i2cWriteReg(i2cAddr: Int, reg: Int, value: Int): Boolean {
         val d = byteArrayOf(reg.toByte(), value.toByte())
-        return i2cWrite(i2cAddr, d) >= 0
+        for (attempt in 0 until I2C_RETRIES) {
+            if (i2cWrite(i2cAddr, d) >= 0) return true
+            i2cRetry("写 0x%02X".format(reg), attempt)
+        }
+        return false
     }
 
     fun i2cReadReg(i2cAddr: Int, reg: Int): Int {
-        i2cWrite(i2cAddr, byteArrayOf(reg.toByte()))
-        val b = i2cRead(i2cAddr, 1) ?: return -1
-        return b[0].toInt() and 0xFF
+        // 注意：原来这里把 i2cWrite 的返回值丢掉了——写失败也照样去读，
+        // 读回来的是上一次的残留值。探测 tuner 时这会误判：
+        // 读到陈旧的 0xA3 就以为「是 FC0013」，其实这一轮通信根本没成功。
+        for (attempt in 0 until I2C_RETRIES) {
+            if (i2cWrite(i2cAddr, byteArrayOf(reg.toByte())) < 0) {
+                i2cRetry("写 0x%02X".format(reg), attempt)
+                continue
+            }
+            val b = i2cRead(i2cAddr, 1)
+            if (b != null) return b[0].toInt() and 0xFF
+            i2cRetry("读 0x%02X".format(reg), attempt)
+        }
+        return -1
     }
 
     // ---------- GPIO ----------
