@@ -26,6 +26,16 @@ class Fc0013(private val rtl: Rtl2832) {
     private fun readReg(reg: Int): Int =
         rtl.i2cReadReg(Rtl2832.FC0013_I2C_ADDR, reg)
 
+    /**
+     * 初始化失败时的可读原因（成功时为空串）。
+     *
+     * 以前 init() 只返回一个布尔值，失败时用户只看到「FC0013 初始化失败」，
+     * 完全不知道是哪一步没成。现在把失败的寄存器地址带出来：
+     * 0x00 写不进去 = I2C 链路没通（换线/供电）；其它寄存器 = 芯片状态异常。
+     */
+    @Volatile var initDetail: String = ""
+        private set
+
     fun init(): Boolean {
         val reg = intArrayOf(
             0x00, 0x09, 0x16, 0x00, 0x00, 0x17, 0x02, 0x0a,
@@ -35,8 +45,16 @@ class Fc0013(private val rtl: Rtl2832) {
         reg[0x07] = reg[0x07] or 0x20
         reg[0x0c] = reg[0x0c] or 0x02
         for (i in 1 until reg.size) {
-            if (!writeReg(i, reg[i])) return false
+            if (!writeReg(i, reg[i])) {
+                initDetail = if (i == 1) {
+                    "写寄存器 0x01 失败——I2C 链路没通（供电不足/OTG 线接触不良，或芯片没上电）"
+                } else {
+                    "写寄存器 0x%02X 失败（值 0x%02X）——芯片未正常响应".format(i, reg[i])
+                }
+                return false
+            }
         }
+        initDetail = ""
         return true
     }
 

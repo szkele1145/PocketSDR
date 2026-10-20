@@ -161,6 +161,9 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
     // 「FC0013 初始化失败」告终——而硬件其实好好的，只是那一次没传过去。
     private val I2C_RETRIES = 3
 
+    /** tuner 探测轮数：首次插入时第一轮 I2C 常打空，多试几轮能救回假故障 */
+    private val PROBE_ROUNDS = 3
+
     /** 累计 I2C 重试次数：自检报告里能看到，就能判断 USB 链路稳不稳 */
     @Volatile var i2cRetryCount = 0
         private set
@@ -276,23 +279,54 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
     }
 
     /** 探测 tuner（只探测 FC0013 与 R820T，覆盖用户硬件与最常见棒子） */
+    /**
+     * 探测 tuner 型号。
+     *
+     * 为什么要多轮：首次插入的设备最容易探测失败——供电刚稳、OTG 刚协商完，
+     * 第一轮 I2C 传输经常打空。这时候直接判 UNKNOWN，用户看到的是
+     * 「未识别的 tuner」，会以为棒子坏了，而实际上只是那一瞬间没传过去。
+     * 多试几轮（每次之间让 I2C 状态复位并稍等）能救回绝大多数这种假故障。
+     *
+     * 探测结果与失败原因都记在 [probeDetail] 里，供上层给出可操作的提示。
+     */
     fun probeTuner(): RtlTuner {
-        setI2cRepeater(true)
-        // FC0013
-        val fc0013 = i2cReadReg(FC0013_I2C_ADDR, FC0013_CHECK_ADDR)
-        if (fc0013 == FC0013_CHECK_VAL) {
+        var lastFc = -1
+        var lastR820 = -1
+        for (round in 0 until PROBE_ROUNDS) {
+            if (round > 0) {
+                // 复位 I2C 状态并稍等，让上一轮可能残留的状态清干净
+                setI2cRepeater(false)
+                setI2cRepeater(true)
+                try { Thread.sleep(30) } catch (_: InterruptedException) {}
+            }
+            setI2cRepeater(true)
+            lastFc = i2cReadReg(FC0013_I2C_ADDR, FC0013_CHECK_ADDR)
+            if (lastFc == FC0013_CHECK_VAL) {
+                setI2cRepeater(false)
+                probeDetail = "FC0013（第 ${round + 1} 轮探测命中）"
+                return RtlTuner.FC0013
+            }
+            lastR820 = i2cReadReg(R820T_I2C_ADDR, R820T_CHECK_ADDR)
+            if (lastR820 == R820T_CHECK_VAL) {
+                setI2cRepeater(false)
+                probeDetail = "R820T（第 ${round + 1} 轮探测命中）"
+                return RtlTuner.R820T
+            }
             setI2cRepeater(false)
-            return RtlTuner.FC0013
+            SdrLog.w("RTL", "tuner 探测第 ${round + 1} 轮未命中 (FC=0x%02X R820=0x%02X)".format(lastFc, lastR820))
         }
-        // R820T
-        val r820t = i2cReadReg(R820T_I2C_ADDR, R820T_CHECK_ADDR)
-        if (r820t == R820T_CHECK_VAL) {
-            setI2cRepeater(false)
-            return RtlTuner.R820T
+        // 区分两种失败：链路完全不通 vs 通了但型号不认识
+        probeDetail = if (lastFc < 0 || lastR820 < 0) {
+            "I2C 通信无响应（$PROBE_ROUNDS 轮都没读到数据）——多半是供电不足或 OTG 线接触不良，换根线/换个充电口试试"
+        } else {
+            "读到了数据但型号不认识（FC0013 标识=0x%02X，R820T 标识=0x%02X）——本版只适配 FC0013".format(lastFc, lastR820)
         }
-        setI2cRepeater(false)
         return RtlTuner.UNKNOWN
     }
+
+    /** 探测过程的人类可读说明（成功时是命中信息，失败时是原因） */
+    @Volatile var probeDetail: String = ""
+        private set
 
     // ---------- 直接采样模式（HF 短波，librtlsdr rtlsdr_set_direct_sampling 移植）----------
     // on: 0=关闭(tuner 正常), 1=I-ADC 直接采样, 2=Q-ADC 直接采样

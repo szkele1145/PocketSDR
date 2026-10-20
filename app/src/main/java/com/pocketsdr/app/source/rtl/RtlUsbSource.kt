@@ -25,6 +25,9 @@ class RtlUsbSource(
     /** 探测到的 tuner 名称（FC0013 / R820T / UNKNOWN），供自检报告展示 */
     val tunerName: String get() = tunerType.name
 
+    /** 探测过程说明：命中时是「第几轮命中」，失败时是「为什么失败」 */
+    val probeDetail: String get() = rtl?.probeDetail ?: ""
+
     /**
      * I2C 累计重试次数。
      *
@@ -86,22 +89,34 @@ class RtlUsbSource(
             RtlTuner.FC0013 -> {
                 rtl.setI2cRepeater(true)
                 val t = Fc0013(rtl)
-                check(t.init()) { "FC0013 初始化失败" }
+                // repeater 必须在任何退出路径上复位：留在 on 状态的话，
+                // 后续所有块寄存器读写都会被转到 I2C 总线上，行为完全错乱。
+                val initOk = try {
+                    t.init()
+                } finally {
+                    rtl.setI2cRepeater(false)
+                }
+                check(initOk) { "FC0013 初始化失败：${t.initDetail.ifEmpty { "未知原因" }}" }
                 tuner = t
-                rtl.setI2cRepeater(false)
                 SdrLog.i("FC0013", "初始化 OK")
             }
             RtlTuner.R820T ->
-                throw UnsupportedOperationException("R820T 暂不支持，本版只适配 FC0013")
+                throw UnsupportedOperationException("检测到 R820T 芯片，本版只适配 FC0013（可换用「直接采样」模式收 HF/短波）")
             RtlTuner.UNKNOWN ->
-                throw UnsupportedOperationException("未识别的 tuner（探测 FC0013/R820T 均无响应，检查天线/供电/OTG）")
+                throw UnsupportedOperationException(
+                    "未识别的 tuner：${rtl.probeDetail.ifEmpty { "探测 FC0013/R820T 均无响应，检查天线/供电/OTG" }}"
+                )
         }
         sampleRate = rtl.setSampleRate(requestedRate).toFloat()
         SdrLog.i("RTL", "采样率请求 $requestedRate 实际 ${sampleRate.toLong()}")
         rtl.resetBuffer()
         rtl.setI2cRepeater(true)
-        check(tuner!!.setParams(centerFreq)) { "FC0013 调谐失败" }
-        rtl.setI2cRepeater(false)
+        val tuneOk = try {
+            tuner!!.setParams(centerFreq)
+        } finally {
+            rtl.setI2cRepeater(false)
+        }
+        check(tuneOk) { "FC0013 调谐失败（${centerFreq / 1000} kHz）——I2C 通信未成功，可换线/换充电口后重试" }
         SdrLog.i("FC0013", "初始调谐 ${centerFreq / 1000} kHz OK")
     }
 
@@ -204,20 +219,24 @@ class RtlUsbSource(
                 return
             }
             val t = tuner ?: return
-            rtl.setI2cRepeater(true)
             // offset tuning：tuner 调到 f − offs（信号在 IF offs 处，基带由 demod 下变频）
             val tuneTo = if (offsetTuning) centerFreq - offsFreq else centerFreq
             // 调谐失败要重试：I2C 偶发抖动（供电/接触）会让一次调谐打空，
             // 而用户看到的只是「频率数字变了、声音没变」，根本无从判断。
             var ok = false
-            for (attempt in 0 until 2) {
-                ok = t.setParams(tuneTo)
-                if (ok) break
-                tuneFailures++
-                SdrLog.w("RTL", "调谐 ${tuneTo / 1000} kHz 失败，重试 ${attempt + 1}/2")
-                try { Thread.sleep(20) } catch (_: InterruptedException) {}
+            rtl.setI2cRepeater(true)
+            try {
+                for (attempt in 0 until 2) {
+                    ok = t.setParams(tuneTo)
+                    if (ok) break
+                    tuneFailures++
+                    SdrLog.w("RTL", "调谐 ${tuneTo / 1000} kHz 失败，重试 ${attempt + 1}/2")
+                    try { Thread.sleep(20) } catch (_: InterruptedException) {}
+                }
+            } finally {
+                // repeater 必须复位：留在 on 状态会让后续块寄存器读写全部错乱
+                rtl.setI2cRepeater(false)
             }
-            rtl.setI2cRepeater(false)
             if (!ok) SdrLog.e("RTL", "调谐 ${tuneTo / 1000} kHz 最终失败")
         } catch (e: Exception) {
             tuneFailures++
@@ -230,8 +249,11 @@ class RtlUsbSource(
         if (closed) return
         try {
             rtl.setI2cRepeater(true)
-            val ok = tuner?.setLnaGain(tenthsDb) ?: false
-            rtl.setI2cRepeater(false)
+            val ok = try {
+                tuner?.setLnaGain(tenthsDb) ?: false
+            } finally {
+                rtl.setI2cRepeater(false)
+            }
             if (!ok) {
                 // 以前失败是完全静默的：用户调了增益却不知道有没有生效
                 hwSettingFailures++
@@ -248,8 +270,11 @@ class RtlUsbSource(
         if (closed) return
         try {
             rtl.setI2cRepeater(true)
-            val ok = tuner?.setGainMode(manual) ?: false
-            rtl.setI2cRepeater(false)
+            val ok = try {
+                tuner?.setGainMode(manual) ?: false
+            } finally {
+                rtl.setI2cRepeater(false)
+            }
             if (!ok) {
                 hwSettingFailures++
                 SdrLog.w("RTL", "增益模式设置失败 ($manual)")
@@ -334,8 +359,15 @@ class RtlUsbSource(
             val ok = rtl.setDirectSampling(mode, tunerExit = null, tunerInit = {
                 // 恢复 tuner：重新初始化 FC0013
                 rtl.setI2cRepeater(true)
-                tuner?.init()
-                rtl.setI2cRepeater(false)
+                try {
+                    val initOk = tuner?.init() ?: false
+                    if (!initOk) {
+                        hwSettingFailures++
+                        SdrLog.e("RTL", "恢复 tuner 失败: ${tuner?.initDetail ?: "无 tuner"}")
+                    }
+                } finally {
+                    rtl.setI2cRepeater(false)
+                }
             })
             if (ok) {
                 directSampling = mode

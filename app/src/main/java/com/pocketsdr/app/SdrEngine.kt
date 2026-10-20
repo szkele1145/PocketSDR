@@ -265,6 +265,9 @@ class SdrEngine private constructor(
         if (rtl != null) {
             sb.append("  USB：").append(rtl.usbDeviceInfo).append('\n')
             sb.append("  tuner：").append(rtl.tunerName).append('\n')
+            if (rtl.probeDetail.isNotEmpty()) {
+                sb.append("  探测：").append(rtl.probeDetail).append('\n')
+            }
             sb.append("  直接采样：").append(
                 when (hardwareDirectSampling) { 1 -> "I-ADC"; 2 -> "Q-ADC"; else -> "关" }).append('\n')
         }
