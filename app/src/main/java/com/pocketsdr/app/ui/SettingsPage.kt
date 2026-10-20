@@ -255,6 +255,7 @@ fun SettingsPage(
                 Switch(checked = autoDb, onCheckedChange = {
                     autoDb = it
                     engine.autoDbRange = it
+                    store.autoDbRange = it
                 }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
                 Spacer(Modifier.width(10.dp))
                 Text("按实测噪声底自动缩放纵轴，不同增益下都能看清信号",

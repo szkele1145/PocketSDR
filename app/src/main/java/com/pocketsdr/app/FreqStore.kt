@@ -111,6 +111,26 @@ class FreqStore(private val context: Context) {
         get() = prefs.getInt("hwPpm", 0)
         set(v) { prefs.edit().putInt("hwPpm", v).apply() }
 
+    /**
+     * 自动 dB 范围（纵轴随实测噪声底/峰值自动缩放）。
+     *
+     * 这个开关以前不存盘：用户关掉（想固定看 -100..0 的绝对刻度），
+     * 退出应用再进来又变回自动，纵轴刻度会突然变样，看着像出了 bug。
+     */
+    var autoDbRange: Boolean
+        get() = prefs.getBoolean("autoDbRange", true)
+        set(v) { prefs.edit().putBoolean("autoDbRange", v).apply() }
+
+    /**
+     * 频谱视野跨度（Hz）。
+     *
+     * 存的是用户放大后的视野；比采样率大说明没放大过，用采样率即可。
+     * 0 = 未缩放。
+     */
+    var viewSpan: Long
+        get() = prefs.getLong("viewSpan", 0L)
+        set(v) { prefs.edit().putLong("viewSpan", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

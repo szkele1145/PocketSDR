@@ -358,6 +358,7 @@ class MainActivity : ComponentActivity(), UiBridge {
         eng.selectMode(com.pocketsdr.app.FreqStore.modeFromIndex(store.lastMode))
         eng.volume = store.lastVolume
         eng.peakHoldEnabled = store.peakHold
+        eng.autoDbRange = store.autoDbRange
         // 静噪要跟着恢复：以前不存盘，真机连接时被强制拉到 -100，用户调好的门限
         // 一重启就没了，底噪全放出来。现在以存盘值为准（见下面首次连接的例外）。
         eng.squelchDb = store.lastSquelch

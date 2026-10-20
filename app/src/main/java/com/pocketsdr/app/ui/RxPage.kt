@@ -104,6 +104,12 @@ fun RxPage(
             center = engine.centerFreq
             // 恢复瀑布速度档位（设置页改过要留下来）
             engine.waterfallSpeed = store.waterfallSpeed.coerceIn(0, 2)
+            // 恢复自动 dB 范围开关：用户关掉是想固定看绝对刻度，
+            // 退出再进来又变自动的话，纵轴刻度会突然变样，像出了 bug
+            engine.autoDbRange = store.autoDbRange
+            // 恢复上次的频谱视野（用户放大过就保持放大；没放大过就用全采样率）
+            val fullSpan = engine.sampleRate.toLong()
+            viewSpan = store.viewSpan.takeIf { it in 128_000L..fullSpan } ?: fullSpan
         }
     }
 
@@ -202,6 +208,8 @@ fun RxPage(
                 },
                 onZoom = { z ->
                     viewSpan = (viewSpan / z).toLong().coerceIn(128_000L, engine.sampleRate.toLong())
+                    // 记住放大后的视野：退出应用再进来还是这个倍数
+                    store.viewSpan = viewSpan
                 },
                 onDragStart = { dragBase = center },
                 onDragEnd = {
@@ -244,7 +252,11 @@ fun RxPage(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
-                    .clickable { viewSpan = fullSpan }
+                    .clickable {
+                        viewSpan = fullSpan
+                        // 复位视野也要写回，否则存盘里还留着放大值，下次进来又是放大状态
+                        store.viewSpan = fullSpan
+                    }
             ) {
                 Text(
                     "视野 " + formatSpan(viewSpan) + if (zoomed) "  ⟲" else "",
