@@ -105,6 +105,8 @@ fun ScanDialog(
     // 本次扫描是不是被用户中途取消的：取消后要给不同的反馈，
     // 否则用户会以为扫完了却只得到几个台
     var scanCancelled by remember { mutableStateOf(false) }
+    // 扫描结束后的说明（取消/失败/有频点被丢弃）。null = 正常扫完，不用多说。
+    var scanNote by remember { mutableStateOf<String?>(null) }
     // 结果排序：默认按信号强度降序——扫出 20 个台时，用户最想先听的是最强的那几个，
     // 按频率排会把弱台和强台混在一起。记住上次的选择。
     var sortByLevel by remember { mutableStateOf(store.scanSortByLevel) }
@@ -112,6 +114,16 @@ fun ScanDialog(
     // 扫到哪了：扫描线程每 90ms 跳一个频点，主界面状态行是 250ms 轮询，
     // 这里自己 200ms 轮一次 tunedFreq，用户就能看到频率一格一格走
     var scanCurFreq by remember { mutableStateOf<Long?>(null) }
+    // 试听调谐失败的提示：调谐是异步的（UI 入队 → DSP 线程 → 硬件 I2C 写），
+    // 点了频率后要等一下才知道硬件到底接不接受。
+    var auditionFailed by remember { mutableStateOf(false) }
+    LaunchedEffect(audition) {
+        auditionFailed = false
+        if (audition != null) {
+            kotlinx.coroutines.delay(300)
+            auditionFailed = !engine.lastTuneOk
+        }
+    }
     LaunchedEffect(scanner != null) {
         while (scanner != null) {
             scanCurFreq = engine.tunedFreq
@@ -207,6 +219,14 @@ fun ScanDialog(
                         Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
                             fontSize = 12.sp, color = Color(0xFF00E5FF))
                     }
+                    if (auditionFailed) {
+                        Text("⚠ 硬件没接受这次调谐（还是原来那个台）——检查 USB 连接后重试",
+                            fontSize = 11.sp, color = Color(0xFFFF6B6B))
+                    }
+                    // 扫描结束说明：取消 / 失败 / 有频点被丢弃，都要说清楚。
+                    scanNote?.let { n ->
+                        Text(n, fontSize = 11.sp, color = Color(0xFFF6D55C))
+                    }
                     // 高度受限 + 可滚动：扫出 20 个台也不会把对话框顶出屏幕
                     LazyColumn(Modifier.height(300.dp).fillMaxWidth()) {
                         items(shownList, key = { it.freq }) { st ->
@@ -259,6 +279,19 @@ fun ScanDialog(
                         onDone = { stations ->
                             onFound(stations.sortedByDescending { it.levelDb })
                             floorDb = scanner?.noiseFloorDb
+                            // 扫完要说清楚发生了什么：正常扫完 / 被取消 / 硬件调谐失败。
+                            // 以前一律显示「扫描完成，找到 N 个台」——取消时也这么显示，
+                            // 用户会以为剩下的频段确实没有台。
+                            val s = scanner
+                            scanNote = when {
+                                s?.scanFailed == true ->
+                                    "扫描失败：硬件调谐全部未成功，检查 USB 连接后再试"
+                                s?.wasCancelled == true ->
+                                    "已取消（只扫了一部分，剩下的频段没扫）"
+                                (s?.tuneFailures ?: 0) > 0 ->
+                                    "扫描完成，${stations.size} 个台（${s?.tuneFailures} 个频点调谐失败已丢弃）"
+                                else -> null
+                            }
                             onProgress(101)
                         })
                     scanner = sc

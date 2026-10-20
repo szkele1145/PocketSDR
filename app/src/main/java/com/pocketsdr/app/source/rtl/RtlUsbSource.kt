@@ -31,6 +31,9 @@ class RtlUsbSource(
     /** demod（基带）寄存器写失败次数：>0 说明基带配置没完全生效 */
     val demodWriteFailures: Int get() = rtl?.demodWriteFailures ?: 0
 
+    /** 累计调谐失败次数（供上层判断「这次调谐成没成」） */
+    override val tuneFailureCount: Int get() = tuneFailures
+
     /**
      * I2C 累计重试次数。
      *
@@ -249,10 +252,10 @@ class RtlUsbSource(
         }
     }
 
-    /** 设 LNA 增益（tenths dB，FC0013 内部取最近档） */
-    fun setLnaGain(tenthsDb: Int) {
-        if (closed) return
-        try {
+    /** 设 LNA 增益（tenths dB，FC0013 内部取最近档）；返回是否被硬件接受 */
+    fun setLnaGain(tenthsDb: Int): Boolean {
+        if (closed) return false
+        return try {
             rtl.setI2cRepeater(true)
             val ok = try {
                 tuner?.setLnaGain(tenthsDb) ?: false
@@ -264,16 +267,18 @@ class RtlUsbSource(
                 hwSettingFailures++
                 SdrLog.w("RTL", "LNA 增益设置失败 ($tenthsDb)")
             }
+            ok
         } catch (e: Exception) {
             hwSettingFailures++
             SdrLog.e("RTL", "LNA 增益异常: ${e.message?.take(40)}")
+            false
         }
     }
 
-    /** 手动增益模式开关（true=手动按 setLnaGain 的值） */
-    fun setGainMode(manual: Boolean) {
-        if (closed) return
-        try {
+    /** 手动增益模式开关（true=手动按 setLnaGain 的值）；返回是否被硬件接受 */
+    fun setGainMode(manual: Boolean): Boolean {
+        if (closed) return false
+        return try {
             rtl.setI2cRepeater(true)
             val ok = try {
                 tuner?.setGainMode(manual) ?: false
@@ -284,9 +289,11 @@ class RtlUsbSource(
                 hwSettingFailures++
                 SdrLog.w("RTL", "增益模式设置失败 ($manual)")
             }
+            ok
         } catch (e: Exception) {
             hwSettingFailures++
             SdrLog.e("RTL", "增益模式异常: ${e.message?.take(40)}")
+            false
         }
     }
 

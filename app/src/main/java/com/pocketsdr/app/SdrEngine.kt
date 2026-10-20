@@ -31,14 +31,22 @@ class SdrEngine private constructor(
     val sourceOrNull: IQSource get() = source
     val isRealSource: Boolean get() = source.isReal
 
-    /** 硬件 LNA 增益（tenths dB），仿真源 no-op */
-    fun setHardwareLnaGain(tenthsDb: Int) {
-        (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.setLnaGain(tenthsDb)
+    /**
+     * 硬件 LNA 增益（tenths dB），仿真源 no-op。
+     *
+     * 返回是否被硬件接受：增益设置失败时，界面上的档位和硬件实际档位
+     * 就对不上了——用户以为增益调上去了，信号强度却纹丝不动，
+     * 看起来像增益功能坏了。返回失败才能让 UI 说出这一点。
+     */
+    fun setHardwareLnaGain(tenthsDb: Int): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return true
+        return src.setLnaGain(tenthsDb)
     }
 
-    /** 硬件手动增益模式 */
-    fun setHardwareGainMode(manual: Boolean) {
-        (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.setGainMode(manual)
+    /** 硬件手动增益模式；返回是否被硬件接受（理由同 [setHardwareLnaGain]） */
+    fun setHardwareGainMode(manual: Boolean): Boolean {
+        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return true
+        return src.setGainMode(manual)
     }
 
     /** 硬件直接采样模式（0=关 1=I-ADC 2=Q-ADC），HF 短波用 */
@@ -95,6 +103,19 @@ class SdrEngine private constructor(
     val centerFreq: Long get() = _centerFreq
     val tunedFreq: Long get() = _tunedFreq
     val sampleRate: Float get() = source.sampleRate
+
+    /**
+     * 最近一次调谐是否被硬件接受。
+     *
+     * 调谐是异步的（UI 入队 → DSP 线程应用 → 硬件 I2C 写），所以
+     * [tuneTo] 的返回值只代表「已提交」。真正成没成要看这个标志：
+     * 它在 DSP 线程应用调谐后立即更新，调用方稍等几十毫秒即可读到。
+     *
+     * 扫台与试听都依赖它——否则会拿着「调谐其实失败了」的信号强度
+     * 当成有效数据，搜出频点错位、电平虚假的电台列表。
+     */
+    @Volatile var lastTuneOk: Boolean = true
+        private set
 
     @Volatile var running = false
         private set
@@ -413,7 +434,16 @@ class SdrEngine private constructor(
             _centerFreq = c
             _tunedFreq = t
             // 调谐在 DSP 线程做（与 bulk 读天然串行，I2C 写不与读竞争）
+            // 硬件调谐可能失败（I2C 抖动/供电不足）。source.centerFreq 是属性
+            // 赋值，拿不到成功与否——只能比较源的失败计数在前后是否增长。
+            // 不比较的话：界面显示的频率是新频率，硬件却还停在旧频率，
+            // 用户听到的还是上一个台，而屏幕上一切正常。
+            val failsBefore = source.tuneFailureCount
             source.centerFreq = c
+            lastTuneOk = source.tuneFailureCount == failsBefore
+            if (!lastTuneOk) {
+                SdrLog.w("DSP", "硬件调谐失败：$c Hz（源失败计数 ${source.tuneFailureCount}）")
+            }
             if (light && !needReset) {
                 // 轻调谐：仅对齐 NCO 相位，滤波器/PLL/AGC 保留——
                 // 连跳（60ms 间隔）时反复全清会让立体声锁不上、AGC 抽搐

@@ -188,12 +188,15 @@ fun SettingsPage(
                 var gainIdx by remember { mutableStateOf(store.hwGainIndex.toFloat()) }
                 var hfDirect by remember { mutableStateOf(store.hwDirectSampling != 0) }
                 var offTune by remember { mutableStateOf(store.hwOffsetTuning) }
+                // 增益设置被硬件拒绝：界面上档位变了，硬件其实没动，
+                // 信号强度纹丝不动——不提示的话用户会以为增益坏了。
+                var gainFailed by remember { mutableStateOf(false) }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("LNA 增益", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = manualGain, onCheckedChange = {
                         manualGain = it
                         store.hwManualGain = it
-                        engine.setHardwareGainMode(it)
+                        gainFailed = !engine.setHardwareGainMode(it)
                     }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
                     if (manualGain) {
                         Slider(
@@ -202,7 +205,7 @@ fun SettingsPage(
                                 gainIdx = it
                                 val idx = it.toInt().coerceIn(0, engine.lnaGains.size - 1)
                                 store.hwGainIndex = idx
-                                engine.setHardwareLnaGain(engine.lnaGains[idx])
+                                gainFailed = !engine.setHardwareLnaGain(engine.lnaGains[idx])
                             },
                             valueRange = 0f..(engine.lnaGains.size - 1).toFloat(),
                             modifier = Modifier.weight(1f),
@@ -211,6 +214,10 @@ fun SettingsPage(
                         Text("%.1fdB".format(engine.lnaGains[gainIdx.toInt().coerceIn(0, engine.lnaGains.size - 1)] / 10f),
                             fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
                     }
+                }
+                if (gainFailed) {
+                    Text("⚠ 增益设置未被硬件接受（档位只显示在界面上，实际没生效）——检查 USB 连接",
+                        fontSize = 10.sp, color = Color(0xFFFF6B6B))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("HF 直采", fontSize = 12.sp, color = Color(0xFF8FA3B8))

@@ -208,6 +208,15 @@ fun FavoritesDialog(
     var sortByFreq by remember { mutableStateOf(store.favSortByFreq) }
     /** 正在试听的收藏台（点收藏项只调谐、不关窗） */
     var audition by remember { mutableStateOf<Long?>(null) }
+    // 试听调谐是否被硬件拒绝（调谐是异步的，延迟一点才能读到结果）
+    var auditionFailed by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(audition) {
+        auditionFailed = false
+        if (audition != null) {
+            kotlinx.coroutines.delay(300)
+            auditionFailed = !engine.lastTuneOk
+        }
+    }
     val shownFavorites = remember(favorites, sortByFreq) {
         if (sortByFreq) favorites.sortedBy { it.freq } else favorites
     }
@@ -217,6 +226,17 @@ fun FavoritesDialog(
         title = { Text("收藏频道 (${favorites.size})") },
         text = {
             Column {
+                // 收藏数据有损坏：以前整份解析失败就静默显示空列表，
+                // 用户以为收藏被清空了。现在明确说出来。
+                if (store.favoritesLoadFailed) {
+                    Text(
+                        if (store.favoritesUnreadable)
+                            "⚠ 收藏数据无法读取，已停止写入以免损坏原始数据（本次不能新增/删除）"
+                        else
+                            "⚠ 收藏里有损坏的条目，已跳过（其余条目正常）",
+                        fontSize = 11.sp, color = Color(0xFFF6D55C)
+                    )
+                }
                 if (favorites.isEmpty()) {
                     Text("暂无收藏。收听到喜欢的台后点「★ 收藏当前」添加。", fontSize = 13.sp)
                 } else {
@@ -235,6 +255,11 @@ fun FavoritesDialog(
                     audition?.let { f ->
                         Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
                             fontSize = 12.sp, color = Color(0xFF00E5FF))
+                        // 硬件没接受这次调谐：听到的还是原来那个台
+                        if (auditionFailed) {
+                            Text("⚠ 硬件没接受这次调谐（还是原来那个台）——检查 USB 连接后重试",
+                                fontSize = 11.sp, color = Color(0xFFFF6B6B))
+                        }
                     }
                 }
                 // 列表必须能滚：收藏多了以后超出对话框的部分会被直接裁掉，

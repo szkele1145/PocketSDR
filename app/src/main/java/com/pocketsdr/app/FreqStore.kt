@@ -11,13 +11,29 @@ class FreqStore(private val context: Context) {
     private val prefs by lazy { context.getSharedPreferences("pocketsdr", Context.MODE_PRIVATE) }
     private val maxRecents = 8
 
-    /** 最近调谐过的频率（Hz，最近在前，去重），用于输入频率对话框的快捷跳台 */
+    /**
+     * 最近调谐过的频率（Hz，最近在前，去重），用于输入频率对话框的快捷跳台。
+     *
+     * 逐条容错：原来整体 try/catch，一条非法数据就让**整份历史消失**，
+     * 而且紧接着 addRecent 会拿空列表回写，原始历史被永久抹掉。
+     */
     fun getRecents(): MutableList<Long> {
         val arr = prefs.getString("recents", null) ?: return mutableListOf()
         return try {
             val ja = JSONArray(arr)
-            MutableList(ja.length()) { i -> ja.getLong(i) }
-        } catch (_: Exception) { mutableListOf() }
+            val out = ArrayList<Long>(ja.length())
+            for (i in 0 until ja.length()) {
+                try {
+                    out.add(ja.getLong(i))
+                } catch (_: Exception) {
+                    // 单条坏数据：跳过这一条，不影响其余
+                }
+            }
+            out
+        } catch (e: Exception) {
+            SdrLog.e("STORE", "最近频率数据无法解析: ${e.message?.take(40)}")
+            mutableListOf()
+        }
     }
 
     fun addRecent(freqHz: Long) {
@@ -175,19 +191,71 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("tuneStepAuto", true)
         set(v) { prefs.edit().putBoolean("tuneStepAuto", v).apply() }
 
-    /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
+    /**
+     * 上次读取收藏时，是否有**部分条目损坏**（好的条目仍照常显示）。
+     * UI 可据此提示用户，而不是让收藏「莫名其妙变少」。
+     */
+    @Volatile var favoritesLoadFailed: Boolean = false
+        private set
+
+    /**
+     * 上次读取收藏时，是否**整份数据都无法解析**。
+     *
+     * 两种情况要分开：
+     * - 部分条目损坏：好的条目照常显示、也允许写入（保留好的 + 新的）
+     * - 整份解析不了：磁盘上的东西根本没被理解，这时写回去等于毁数据，
+     *   必须拒绝写入。
+     */
+    @Volatile var favoritesUnreadable: Boolean = false
+        private set
+
+    /**
+     * 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]）
+     *
+     * 必须**逐条**容错。原来是整体 try/catch：任意一条缺字段就抛异常，
+     * 整个 catch 掉返回空列表——用户收藏全部消失且毫无提示。
+     * 更糟的是紧接着的 addFavorite/removeFavorite 会拿这个空列表回写磁盘，
+     * 把真实收藏**永久覆盖掉**。
+     * 现在只跳过坏的那一条，其余照常加载。
+     */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()
+        favoritesLoadFailed = false
+        favoritesUnreadable = false
         return try {
             val ja = JSONArray(arr)
-            MutableList(ja.length()) { i ->
-                val o = ja.getJSONObject(i)
-                Ch(o.getString("n"), o.getLong("f"), o.getInt("m"))
+            val out = ArrayList<Ch>(ja.length())
+            var bad = 0
+            for (i in 0 until ja.length()) {
+                try {
+                    val o = ja.getJSONObject(i)
+                    out.add(Ch(o.getString("n"), o.getLong("f"), o.getInt("m")))
+                } catch (_: Exception) {
+                    bad++
+                }
             }
-        } catch (_: Exception) { mutableListOf() }
+            if (bad > 0) {
+                favoritesLoadFailed = true
+                SdrLog.w("STORE", "收藏里有 $bad 条数据损坏，已跳过（其余 ${out.size} 条正常）")
+            }
+            out
+        } catch (e: Exception) {
+            // 整份 JSON 都解析不了：不动磁盘，返回空并标记「不可读」。
+            // 关键是不能让调用方把这个空列表写回去覆盖原文。
+            favoritesLoadFailed = true
+            favoritesUnreadable = true
+            SdrLog.e("STORE", "收藏数据无法解析: ${e.message?.take(40)}")
+            mutableListOf()
+        }
     }
 
     fun saveFavorites(list: List<Ch>) {
+        // 护栏：整份数据读不出来时，把「空列表」写回去 = 毁掉用户原始收藏。
+        // 宁可这次不保存，也不能毁数据。
+        if (favoritesUnreadable) {
+            SdrLog.w("STORE", "收藏数据读不出来，跳过本次写入以免覆盖原始数据")
+            return
+        }
         val ja = JSONArray()
         list.forEach { c ->
             val o = org.json.JSONObject()
