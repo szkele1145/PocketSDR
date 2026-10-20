@@ -28,6 +28,9 @@ class RtlUsbSource(
     /** 探测过程说明：命中时是「第几轮命中」，失败时是「为什么失败」 */
     val probeDetail: String get() = rtl?.probeDetail ?: ""
 
+    /** demod（基带）寄存器写失败次数：>0 说明基带配置没完全生效 */
+    val demodWriteFailures: Int get() = rtl?.demodWriteFailures ?: 0
+
     /**
      * I2C 累计重试次数。
      *
@@ -107,7 +110,9 @@ class RtlUsbSource(
                     "未识别的 tuner：${rtl.probeDetail.ifEmpty { "探测 FC0013/R820T 均无响应，检查天线/供电/OTG" }}"
                 )
         }
-        sampleRate = rtl.setSampleRate(requestedRate).toFloat()
+        val realRate = rtl.setSampleRate(requestedRate)
+        check(realRate > 0) { "设置采样率失败（demod 寄存器写入未成功）——USB 通信异常，可换线/换充电口后重试" }
+        sampleRate = realRate.toFloat()
         SdrLog.i("RTL", "采样率请求 $requestedRate 实际 ${sampleRate.toLong()}")
         rtl.resetBuffer()
         rtl.setI2cRepeater(true)
@@ -309,18 +314,37 @@ class RtlUsbSource(
     fun setPpm(value: Int): Boolean {
         if (closed) return false
         val v = value.coerceIn(-200, 200)
-        ppm = v
+        val oldXtal = rtl.rtlXtal
+        val oldPpm = ppm
         return try {
             rtl.setI2cRepeater(false)
             rtl.setXtalHz(Rtl2832.DEFAULT_XTAL + (Rtl2832.DEFAULT_XTAL * v / 1_000_000L))
             // xtal 变了 → 采样率寄存器过时，必须重算；重算会软复位，需再复位端点
             val real = rtl.setSampleRate(sampleRate.toLong())
+            if (real <= 0L) {
+                // 采样率没写进去，但 xtal 已经改了——状态不一致，必须回滚，
+                // 否则设备会一直用一个「算错的晶振」而毫无察觉。
+                rtl.setXtalHz(oldXtal)
+                rtl.setSampleRate(sampleRate.toLong())
+                rtl.resetBuffer()
+                SdrLog.e("RTL", "PPM 校准失败：采样率寄存器写入未成功，已回滚晶振")
+                ppm = oldPpm
+                return false
+            }
             rtl.resetBuffer()
             retune()
+            ppm = v
             SdrLog.i("RTL", "PPM=$v 校准后采样率=$real")
             true
         } catch (e: Exception) {
-            SdrLog.e("RTL", "PPM 校准失败: ${e.message?.take(40)}")
+            // 异常路径同样回滚：xtal 已改而采样率可能没改，状态不一致
+            try {
+                rtl.setXtalHz(oldXtal)
+                rtl.setSampleRate(sampleRate.toLong())
+                rtl.resetBuffer()
+            } catch (_: Exception) {}
+            ppm = oldPpm
+            SdrLog.e("RTL", "PPM 校准失败: ${e.message?.take(40)}，已回滚")
             false
         }
     }

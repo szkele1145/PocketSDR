@@ -168,6 +168,16 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
     @Volatile var i2cRetryCount = 0
         private set
 
+    /**
+     * demod（基带）寄存器写失败累计次数。
+     *
+     * I2C 写的是 tuner，demod 写的是 RTL2832 自身——两条不同的通路。
+     * demod 写失败意味着基带配置没生效（采样率、IF 频率、软复位…），
+     * 现象是频谱看起来正常但频率/带宽全错，非常难自查。
+     */
+    @Volatile var demodWriteFailures = 0
+        private set
+
     private fun i2cRetry(what: String, attempt: Int) {
         i2cRetryCount++
         SdrLog.i("RTL", "I2C $what 失败，重试 ${attempt + 1}/$I2C_RETRIES")
@@ -380,7 +390,13 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
         return r
     }
 
-    /** 设置采样率，返回实际速率 Hz（如请求 1.024M 得到精确 1024000） */
+    /**
+     * 设置采样率，返回实际速率 Hz（如请求 1.024M 得到精确 1024000）。
+     *
+     * 返回 0 表示设置失败：demod 寄存器写不进去时，采样率仍是旧值，
+     * 而 App 会以为设置成功了——结果频谱显示的频率和带宽都是错的，
+     * 却没有任何提示。这在 USB 供电不稳的设备上真会发生。
+     */
     fun setSampleRate(sampRate: Long): Long {
         setI2cRepeater(false)
         // rsamp_ratio = (xtal * 2^22) / rate，低 26 位对齐 4
@@ -389,11 +405,16 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
         val realRate = (rtlXtal.toDouble() * (1L shl 22)) / realRatio.toDouble()
         val hi = (rsampRatio shr 16) and 0xFFFF
         val lo = rsampRatio and 0xFFFF
-        demodWriteReg(1, 0x9f, hi, 2)
-        demodWriteReg(1, 0xa1, lo, 2)
+        var ok = demodWriteReg(1, 0x9f, hi, 2)
+        ok = ok and demodWriteReg(1, 0xa1, lo, 2)
         // 软复位生效
-        demodWriteReg(1, 0x01, 0x14, 1)
-        demodWriteReg(1, 0x01, 0x10, 1)
+        ok = ok and demodWriteReg(1, 0x01, 0x14, 1)
+        ok = ok and demodWriteReg(1, 0x01, 0x10, 1)
+        if (!ok) {
+            demodWriteFailures++
+            SdrLog.e("RTL", "设置采样率失败（demod 寄存器写入未成功）")
+            return 0L
+        }
         return realRate.toLong()
     }
 
