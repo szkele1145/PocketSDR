@@ -325,7 +325,10 @@ fun SettingsPage(
         // ===== 关于 =====
         GroupCard("关于") {
             Text("PocketSDR · RTL-SDR 横屏收音机", fontSize = 12.sp, color = Color(0xFF8FA3B8))
-            Text("仿真模式可无硬件体验全部功能；RTL-SDR 插入 OTG 自动切换真硬件",
+            // 这句以前写死成「仿真模式…」，插上硬件之后它就变成假的了。
+            Text(
+                if (engine.isRealSource) "已连上真实硬件：听到的就是真实频段"
+                else "仿真模式可无硬件体验全部功能；RTL-SDR 插入 OTG 自动切换真硬件",
                 fontSize = 11.sp, color = Color(0xFF5A6B7F))
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -362,7 +365,7 @@ fun SettingsPage(
     }
 
     // ---- 对话框们（复用原有实现） ----
-    if (showOnboarding) OnboardingDialog { showOnboarding = false }
+    if (showOnboarding) OnboardingDialog(engine) { showOnboarding = false }
     if (showFreqInput) FreqInputDialog(engine, store, onDismiss = {
         tuned = engine.tunedFreq; showFreqInput = false
     })

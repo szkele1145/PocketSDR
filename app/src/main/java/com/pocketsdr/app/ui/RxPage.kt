@@ -8,6 +8,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -94,6 +96,15 @@ fun RxPage(
     // 搜台：核心操作，不该只藏在设置页里（主界面状态提示会引导用户去搜台，
     // 那个按钮必须在主界面才点得到）
     var showScan by remember { mutableStateOf(false) }
+    // 首次启动自动弹一次「怎么用」。
+    // 以前 onboardingDone 这个标志存在却从没用过——引导写得再好也没人看得到，
+    // 用户只能自己摸索。设置页里仍保留入口，想重看随时能看。
+    var showOnboarding by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (!store.onboardingDone) {
+            showOnboarding = true
+        }
+    }
     var scanProgress by remember { mutableStateOf(-1) }
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     // 收藏列表快照：弹窗里增删后必须回写这里，否则底部 ★ 角标和列表都不刷新
@@ -454,7 +465,10 @@ fun RxPage(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Filled.Stop,
+                                // 原来用 Stop（方块）图标表示「录音文件」，
+                                // 语义完全对不上：方块在录音按钮上就是「停止」的意思，
+                                // 用户会以为点它会停止录音。改成音乐库图标。
+                                imageVector = Icons.Filled.LibraryMusic,
                                 contentDescription = "录音文件",
                                 tint = Color(0xFF00E5FF),
                                 modifier = Modifier.size(20.dp)
@@ -526,9 +540,11 @@ fun RxPage(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
+                                // 未录时用麦克风图标：原来用方块（Stop）表示
+                                // 「开始录音」，方块在录音语境里是「停止」的意思。
                                 imageVector = if (recording && !recordingPaused) Icons.Filled.Pause
                                              else if (recordingPaused) Icons.Filled.PlayArrow
-                                             else Icons.Filled.Stop,
+                                             else Icons.Filled.Mic,
                                 contentDescription = when {
                                     recording && !recordingPaused -> "暂停录音"
                                     recordingPaused -> "继续录音"
@@ -616,6 +632,12 @@ fun RxPage(
                 }
             }
             // 直接输入频率 / 收藏台弹窗（覆盖显示，不翻设置页）
+            if (showOnboarding) {
+                OnboardingDialog(engine) {
+                    store.onboardingDone = true
+                    showOnboarding = false
+                }
+            }
             if (showFreqInput) {
                 FreqInputDialog(
                     engine, store,

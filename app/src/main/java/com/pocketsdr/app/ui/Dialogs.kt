@@ -48,19 +48,31 @@ val PresetBands = listOf(
 
 /** 新手引导 */
 @Composable
-fun OnboardingDialog(onDismiss: () -> Unit) {
+fun OnboardingDialog(engine: SdrEngine? = null, onDismiss: () -> Unit) {
+    // 当前是不是真机：以前这条写死成「现在是仿真模式」，
+    // 插上硬件之后这句话就变成假的了。
+    val real = engine?.isRealSource == true
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("📻 怎么用") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("① 直接听：设置页点「FM 广播」→ 回收音页点频谱图上的尖峰", fontSize = 13.sp)
-                Text("② 调频率：点大数字输入 MHz，或点 ▲▼ 步进（长按连续跳）", fontSize = 13.sp)
-                Text("③ 频谱：单指左右拖 = 平移 · 双指捏合 = 放大缩小", fontSize = 13.sp)
-                Text("④ 找台：设置页「🔍搜台」自动扫 FM 全波段，结果点一下就能听", fontSize = 13.sp)
-                Text("⑤ 两个页面：收音页只管听，其他都在设置页", fontSize = 13.sp)
-                Text("⑥ 现在是仿真模式（没插硬件也能玩）；RTL-SDR 棒子插上自动变真收音机",
-                    fontSize = 13.sp, color = Color(0xFF00E5FF))
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text(
+                    if (real) "已连上硬件：现在听到的就是真实频段"
+                    else "现在是仿真模式（没插硬件也能玩）；RTL-SDR 棒子插上自动变真收音机",
+                    fontSize = 13.sp, color = if (real) Color(0xFF00E5FF) else Color(0xFF8FA3B8)
+                )
+                Text("—— 全部功能都有按钮，不用记手势 ——", fontSize = 12.sp, color = Color(0xFF5A6B7F))
+                Text("① 换台：收音页点频谱上的尖峰，或点左下角大数字输入频率", fontSize = 13.sp)
+                Text("② 微调：点大数字右边的 ▲▼ 步进（长按连续跳）", fontSize = 13.sp)
+                Text("③ 找台：收音页点「🔍 搜台」，选波段自动扫，结果点一下就能听", fontSize = 13.sp)
+                Text("④ 收台：点频率右边的 ★ 图标存起来，点「★ N」翻出收藏", fontSize = 13.sp)
+                Text("⑤ 录一段：点「⏺ 录音」，录完点底部工具栏的音乐图标进文件里回放/分享",
+                    fontSize = 13.sp)
+                Text("⑥ 收窄频谱：点频谱右上角「视野」旁的 ⟲ 可复位放大", fontSize = 13.sp)
+                Text("⑦ 换调制：收音页第二行直接点 WFM / NFM / AM / SSB", fontSize = 13.sp)
+                Text("⑧ 硬件问题：设置页「USB 诊断」里有完整的排查信息和自检报告",
+                    fontSize = 13.sp)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
