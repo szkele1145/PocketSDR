@@ -22,7 +22,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,6 +57,15 @@ fun ScanDialog(
     // 扫描器实例保留，用于读回实测噪声底（判断灵敏度/是否搜得到台）
     var scanner by remember { mutableStateOf<com.pocketsdr.app.FmScanner?>(null) }
     var floorDb by remember { mutableStateOf<Float?>(null) }
+    // 已收藏的频率集合：搜出来的台大多只想留一两个，
+    // 以前 ★ 只是只读文字，点了没反应，用户只能「全存收藏」把 20 个台全收下。
+    val favFreqs = remember { mutableStateListOf<Long>() }
+    /** 正在试听的频率（null = 没在试听） */
+    var audition by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(Unit) {
+        favFreqs.clear()
+        favFreqs.addAll(store.getFavorites().map { it.freq })
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (scanProgress in 0..100) "搜索中… $scanProgress% (${scanFound.size} 台)"
@@ -82,20 +93,43 @@ fun ScanDialog(
                     Text("尚未找到电台。点右下角「开始扫描」，约 20 秒。", fontSize = 13.sp,
                         color = Color(0xFF5A6B7F))
                 } else {
+                    // 正在试听哪个台：点频率只调谐不关窗，用户可以连续试听，
+                    // 听满意了再点 ★ 收藏——原来一点就关窗口，想收藏还得重新打开对话框。
+                    audition?.let { f ->
+                        Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
+                            fontSize = 12.sp, color = Color(0xFF00E5FF))
+                    }
                     // 高度受限 + 可滚动：扫出 20 个台也不会把对话框顶出屏幕
                     LazyColumn(Modifier.height(300.dp).fillMaxWidth()) {
                         items(scanFound, key = { it.freq }) { st ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = {
-                                    engine.tuneTo(st.freq); onDismiss()
+                                    engine.tuneTo(st.freq)
+                                    audition = st.freq
                                 }) { Text(formatFreq(st.freq), fontSize = 14.sp) }
                                 Text("${st.levelDb.toInt()}dB", fontSize = 11.sp,
                                     color = Color(0xFF5A6B7F), modifier = Modifier.weight(1f))
-                                val saved = remember(st.freq) {
-                                    store.getFavorites().any { it.freq == st.freq }
+                                // ★ 可点：单独收藏/取消收藏这一个台
+                                val saved = favFreqs.contains(st.freq)
+                                TextButton(
+                                    onClick = {
+                                        if (saved) {
+                                            store.removeFavorite(st.freq)
+                                            favFreqs.remove(st.freq)
+                                        } else {
+                                            store.addFavorite(
+                                                com.pocketsdr.app.FreqStore.Ch(
+                                                    formatFreq(st.freq), st.freq, 0)
+                                            )
+                                            favFreqs.add(st.freq)
+                                        }
+                                    },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Text(if (saved) "★" else "☆", fontSize = 16.sp,
+                                        color = if (saved) Color(0xFF00E5FF) else Color(0xFF5A6B7F))
                                 }
-                                Text(if (saved) "★" else "", fontSize = 14.sp,
-                                    color = Color(0xFF00E5FF))
                             }
                         }
                     }
@@ -123,12 +157,18 @@ fun ScanDialog(
         dismissButton = {
             Row {
                 if (scanProgress > 100 && scanFound.isNotEmpty()) {
-                    TextButton(onClick = {
-                        scanFound.forEach { st ->
-                            store.addFavorite(com.pocketsdr.app.FreqStore.Ch(
-                                formatFreq(st.freq), st.freq, 0))
-                        }
-                    }) { Text("★ 全存收藏") }
+                    // 已经全收藏了就别再显示这个按钮——重复点没有意义，
+                    // 用户会以为收藏出了重复项
+                    val allSaved = scanFound.all { favFreqs.contains(it.freq) }
+                    if (!allSaved) {
+                        TextButton(onClick = {
+                            scanFound.forEach { st ->
+                                store.addFavorite(com.pocketsdr.app.FreqStore.Ch(
+                                    formatFreq(st.freq), st.freq, 0))
+                                if (!favFreqs.contains(st.freq)) favFreqs.add(st.freq)
+                            }
+                        }) { Text("★ 全存收藏") }
+                    }
                 }
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
