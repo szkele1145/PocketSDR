@@ -220,7 +220,9 @@ fun RxPage(
                         msg,
                         fontSize = 11.sp,
                         color = Color(0xFFFF9E9E),
-                        maxLines = 2,
+                        // 3 行：v2.60.0 起诊断信息变长了（要区分「I2C 无响应」与
+                        // 「型号不认识」），2 行会把「换线/换口」这类关键指引切掉。
+                        maxLines = 3,
                         modifier = Modifier.weight(1f)
                     )
                     Text("›", fontSize = 15.sp, color = Color(0xFFFF6B6B))

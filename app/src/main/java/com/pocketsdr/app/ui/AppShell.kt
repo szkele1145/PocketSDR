@@ -52,6 +52,8 @@ fun AppShell(
     rdsLocked: Boolean = false,
     /** 插着设备但未连接的提示（null = 无提示） */
     usbPending: String? = null,
+    /** 最近一次硬件连接失败的完整原因（横幅上截断了，完整版在 USB 诊断页显示） */
+    usbErrorFull: String? = null,
     onExit: () -> Unit
 ) {
     var page by remember { mutableStateOf(0) }
@@ -84,6 +86,7 @@ fun AppShell(
                         engine = engine,
                         status = status,
                         focusUsbDiag = usbDiagFocus,
+                        usbErrorFull = usbErrorFull,
                         onExit = onExit
                     )
                 }

@@ -31,6 +31,8 @@ fun SettingsPage(
     status: String,
     /** 主界面硬件提示横幅被点中：进来就滚到 USB 诊断，别让用户自己找 */
     focusUsbDiag: Boolean = false,
+    /** 最近一次硬件连接失败的完整原因（横幅上截断了，这里给完整版） */
+    usbErrorFull: String? = null,
     onExit: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -310,7 +312,7 @@ fun SettingsPage(
             // 记下这张卡在滚动容器里的位置，主界面横幅点进来时直接滚到这儿
             usbDiagTop = it.positionInParent().y
         }) {
-            UsbDiagCard(engine)
+            UsbDiagCard(engine, usbErrorFull)
         }
 
         // ===== 关于 =====
@@ -373,7 +375,7 @@ fun SettingsPage(
  * 非官方棒子的 PID 落在白名单外时，这里是唯一的排查与自救入口。
  */
 @Composable
-fun UsbDiagCard(engine: SdrEngine? = null) {
+fun UsbDiagCard(engine: SdrEngine? = null, usbErrorFull: String? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var entries by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(listOf<com.pocketsdr.app.UsbDiag.Entry>()) }
     val refresh: () -> Unit = {
@@ -383,6 +385,22 @@ fun UsbDiagCard(engine: SdrEngine? = null) {
     // 打开设置页时刷新一次（进入页面必然重组，插拔后重进即可）
     androidx.compose.runtime.LaunchedEffect(Unit) { refresh() }
     Column(Modifier.fillMaxWidth()) {
+        // 上次连接失败的完整原因：主界面横幅上为了排版截断了，
+        // 而被砍掉的往往正是「该换线还是该换芯片」这类关键判断依据。
+        if (!usbErrorFull.isNullOrBlank()) {
+            Surface(
+                color = Color(0xFF2A1114),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            ) {
+                Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                    Text(
+                        "上次连接失败：$usbErrorFull",
+                        fontSize = 11.sp,
+                        color = Color(0xFFFF9E9E)
+                    )
+                }
+            }
+        }
         // 实时数据流状态：真机连上了但没数据，是最常见也最难猜的故障
         if (engine != null && engine.isRealSource) {
             var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }

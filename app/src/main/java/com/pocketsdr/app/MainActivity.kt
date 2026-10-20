@@ -51,6 +51,14 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var usbPendingText by mutableStateOf<String?>(null)
     /** 最近一次硬件连接失败的原因；不为空时优先占据主界面状态行，直到下次连接尝试 */
     private var hwErrorText by mutableStateOf<String?>(null)
+    /**
+     * 最近一次硬件连接失败的**完整**原因（不截断）。
+     *
+     * 横幅上的文字要短，只能截断；但排查真机问题恰恰需要那被砍掉的后半句
+     * （比如「I2C 通信无响应——多半是供电不足或 OTG 线接触不良」）。
+     * 完整版存下来，在 USB 诊断页整段显示。
+     */
+    private var hwErrorFull by mutableStateOf<String?>(null)
 
     // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
     private val waterfallBmp = com.pocketsdr.app.ui.WaterfallBitmap(1024, 180)
@@ -224,11 +232,21 @@ class MainActivity : ComponentActivity(), UiBridge {
         val conn = try {
             usbManager.openDevice(device)
         } catch (e: Exception) {
-            pushStatus("USB 打开异常: ${e.message?.take(50)}")
+            // 打开异常也要留住：以前只 pushStatus 一下，状态行几秒就被别的消息顶掉了，
+            // 用户只看到「插了没反应」，完全不知道发生了什么。
+            val reason = "USB 打开异常：${e.message?.takeIf { it.isNotBlank() } ?: "未知错误"}"
+            hwErrorFull = reason
+            hwErrorText = "⚠ $reason（点这里到 USB 诊断）"
+            pushStatus(reason)
+            refreshUsbPending()
             null
         }
         if (conn == null) {
-            pushStatus("USB 打开失败（设备忙？拔插一次或关掉其它 SDR 应用）")
+            val reason = "USB 打开失败（设备被占用？）——拔插一次，或关掉其它 SDR 应用后重试"
+            hwErrorFull = reason
+            hwErrorText = "⚠ $reason（点这里到 USB 诊断）"
+            pushStatus(reason)
+            refreshUsbPending()
             return
         }
         var src: RtlUsbSource? = null
@@ -267,12 +285,15 @@ class MainActivity : ComponentActivity(), UiBridge {
             try { conn.close() } catch (_: Exception) {}
             // 失败原因必须留住且看得见：switchToSimulated 会把状态行改成「仿真模式」，
             // 用户只看到一秒钟的报错就没了，真机排查时等于没有线索。
-            hwErrorText = "⚠ 硬件连接失败：${e.message?.take(70) ?: "未知原因"}（点这里到 USB 诊断）"
+            val reason = e.message?.takeIf { it.isNotBlank() } ?: "未知原因"
+            hwErrorFull = reason
+            hwErrorText = "⚠ 硬件连接失败：${reason.take(70)}（点这里到 USB 诊断）"
             switchToSimulated()
             refreshUsbPending()
             return
         }
         hwErrorText = null
+        hwErrorFull = null
         refreshUsbPending()
     }
 
@@ -413,6 +434,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 rdsName = rdsName,
                 rdsLocked = rdsLocked,
                 usbPending = usbPendingText,
+                usbErrorFull = hwErrorFull,
                 onExit = { finish() }
             )
         } else {

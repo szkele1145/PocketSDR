@@ -137,13 +137,27 @@ class Rtl2832(private val conn: UsbDeviceConnection, private val bulkInEp: UsbEn
     }
 
     // ---------- I2C ----------
+    /**
+     * repeater 的「记录状态」。
+     *
+     * 记录值必须与硬件真实状态一致，否则去重逻辑会跳过必要的写操作：
+     * 记录说「已关闭」而硬件其实还开着，后续所有块寄存器读写都会被转到
+     * I2C 总线上去，行为完全错乱（现象是调谐失败、频谱异常）。
+     */
     private var i2cRepeaterOn = -1
 
     fun setI2cRepeater(on: Boolean) {
         val want = if (on) 1 else 0
         if (want == i2cRepeaterOn) return
-        i2cRepeaterOn = want
-        demodWriteReg(1, 0x01, if (on) 0x18 else 0x10, 1)
+        // 写失败时不能更新记录值：否则下次同样的调用会被去重逻辑跳过，
+        // 而硬件状态并没有真的改变。
+        if (demodWriteReg(1, 0x01, if (on) 0x18 else 0x10, 1)) {
+            i2cRepeaterOn = want
+        } else {
+            demodWriteFailures++
+            SdrLog.e("RTL", "切换 I2C repeater 失败（${if (on) "开" else "关"}）")
+            // 记录值保持不变，下一次调用还会真正写一次
+        }
     }
 
     fun i2cWrite(addr: Int, data: ByteArray): Int = writeArray(IICB, addr, data, data.size)
