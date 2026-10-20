@@ -142,6 +142,16 @@ class FreqStore(private val context: Context) {
         set(v) { prefs.edit().putBoolean("favSortByFreq", v).apply() }
 
     /**
+     * 搜台结果排序方式：true = 按信号强度降序，false = 按频率。
+     *
+     * 默认按强度：扫出 20 个台时，用户最想先听的是最强的那几个；
+     * 按频率排更像一张频段地图，是另一种需求。记住用户的选择。
+     */
+    var scanSortByLevel: Boolean
+        get() = prefs.getBoolean("scanSortByLevel", true)
+        set(v) { prefs.edit().putBoolean("scanSortByLevel", v).apply() }
+
+    /**
      * 步进档位，存的是**步长值（Hz）**而不是列表序号。
      *
      * 存值不存序号：档位表以后增删档（比如加个 9kHz 业余信道间隔），

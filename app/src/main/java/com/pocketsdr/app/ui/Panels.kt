@@ -105,6 +105,20 @@ fun ScanDialog(
     // 本次扫描是不是被用户中途取消的：取消后要给不同的反馈，
     // 否则用户会以为扫完了却只得到几个台
     var scanCancelled by remember { mutableStateOf(false) }
+    // 结果排序：默认按信号强度降序——扫出 20 个台时，用户最想先听的是最强的那几个，
+    // 按频率排会把弱台和强台混在一起。记住上次的选择。
+    var sortByLevel by remember { mutableStateOf(store.scanSortByLevel) }
+    val shownList = if (sortByLevel) scanFound.sortedByDescending { it.levelDb } else scanFound
+    // 扫到哪了：扫描线程每 90ms 跳一个频点，主界面状态行是 250ms 轮询，
+    // 这里自己 200ms 轮一次 tunedFreq，用户就能看到频率一格一格走
+    var scanCurFreq by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(scanner != null) {
+        while (scanner != null) {
+            scanCurFreq = engine.tunedFreq
+            kotlinx.coroutines.delay(200)
+        }
+        scanCurFreq = null
+    }
     LaunchedEffect(Unit) {
         favFreqs.clear()
         favFreqs.addAll(store.getFavorites().map { it.freq })
@@ -151,6 +165,11 @@ fun ScanDialog(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         color = Color(0xFF00E5FF)
                     )
+                    // 正在扫的频率：只看进度条不知道扫到哪儿了，
+                    // 频率一格格走才直观地看出「它在正常工作」
+                    scanCurFreq?.let { cf ->
+                        Text("正在扫 ${formatFreq(cf)}", fontSize = 12.sp, color = Color(0xFF00E5FF))
+                    }
                 }
                 // 实测噪声底：真机搜不到台时，这一行能直接说明是"信号太弱"还是"阈值不对"
                 floorDb?.let { fl ->
@@ -168,6 +187,20 @@ fun ScanDialog(
                         Text("已取消扫描（找到 ${scanFound.size} 个台，可直接试听/收藏）",
                             fontSize = 12.sp, color = Color(0xFFF6D55C))
                     }
+                    // 排序切换：强度优先（默认）看最强的台，频率序像一张频段地图
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("排序", fontSize = 11.sp, color = Color(0xFF5A6B7F))
+                        TextButton(onClick = {
+                            sortByLevel = !sortByLevel
+                            store.scanSortByLevel = sortByLevel
+                        }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
+                            Text(
+                                if (sortByLevel) "按强度" else "按频率",
+                                fontSize = 12.sp,
+                                color = Color(0xFF00E5FF)
+                            )
+                        }
+                    }
                     // 正在试听哪个台：点频率只调谐不关窗，用户可以连续试听，
                     // 听满意了再点 ★ 收藏——原来一点就关窗口，想收藏还得重新打开对话框。
                     audition?.let { f ->
@@ -176,7 +209,7 @@ fun ScanDialog(
                     }
                     // 高度受限 + 可滚动：扫出 20 个台也不会把对话框顶出屏幕
                     LazyColumn(Modifier.height(300.dp).fillMaxWidth()) {
-                        items(scanFound, key = { it.freq }) { st ->
+                        items(shownList, key = { it.freq }) { st ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = {
                                     engine.tuneTo(st.freq)
