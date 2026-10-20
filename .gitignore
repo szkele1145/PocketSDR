@@ -10,3 +10,4 @@ captures/
 *.aab
 !gradle/wrapper/gradle-wrapper.jar
 .kotlin/
+.tmp/

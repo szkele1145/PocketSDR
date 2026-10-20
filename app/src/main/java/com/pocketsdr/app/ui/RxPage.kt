@@ -33,6 +33,21 @@ import com.pocketsdr.app.SdrEngine
 import kotlinx.coroutines.launch
 
 /**
+ * 步进调谐档位。
+ *
+ * FM 广播台间隔 100/200kHz，用 100kHz 一格格挪最合适；
+ * 航空对讲/业余无线电是 25kHz 频道；
+ * 短波台挤得密，要 1kHz 才挪得动。
+ */
+private data class TuneStep(val label: String, val hz: Long)
+
+private val TuneSteps = listOf(
+    TuneStep("100k", 100_000L),
+    TuneStep("25k", 25_000L),
+    TuneStep("1k", 1_000L)
+)
+
+/**
  * 收音页（横屏主界面）——布局照 SDR# 桌面版：
  *   ① 顶部频率刻度（跟随变焦视角）
  *   ② 中部频谱 + 瀑布铺满（点峰跳频 / 拖拽移中心 / 双指缩放）
@@ -89,6 +104,8 @@ fun RxPage(
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     // 收藏列表快照：弹窗里增删后必须回写这里，否则底部 ★ 角标和列表都不刷新
     var favorites by remember { mutableStateOf(store.getFavorites()) }
+    // 步进调谐档位（0=100kHz 1=25kHz 2=1kHz），存盘记住用户习惯
+    var tuneStepIdx by remember { mutableStateOf(store.tuneStepIndex.coerceIn(0, TuneSteps.size - 1)) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
@@ -355,6 +372,45 @@ fun RxPage(
                             }
                         }
                     }
+                    // 步进调谐：SDR 的基本操作。
+                    // 以前主界面没有这个，粗调到台附近后想微调只能反复开输入框输数字——
+                    // 而「点大频率开输入框」那个框还会挡住频谱。
+                    // 档位可点，循环 100k → 25k → 1k，选了记在盘上。
+                    val step = TuneSteps[tuneStepIdx]
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StepButton("◀") {
+                            val nt = (engine.tunedFreq - step.hz).coerceAtLeast(0L)
+                            engine.tuneTo(nt)
+                            tuned = nt
+                        }
+                        Surface(
+                            color = Color(0xFF1A2230),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .widthIn(min = 44.dp)
+                                .clickable {
+                                    tuneStepIdx = (tuneStepIdx + 1) % TuneSteps.size
+                                    store.tuneStepIndex = tuneStepIdx
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    step.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF8FA3B8),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
+                                )
+                            }
+                        }
+                        StepButton("▶") {
+                            val nt = engine.tunedFreq + step.hz
+                            engine.tuneTo(nt)
+                            tuned = nt
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
                     // ★ 一键收藏/取消：当前频率是否已收藏一眼可见，一点即切，不用进弹窗
                     val isFav = favorites.any { it.freq == tuned }
                     Surface(
@@ -742,6 +798,29 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
  * 每个点连同当时的调谐频率一起记录：换了台之后，旧台的强度和新台画在同一条线上
  * 会误导用户（看着像信号突然掉了，其实只是换了个频点）。所以频率一变，曲线就断开。
  */
+/** 步进调谐的单向按钮（◀ / ▶） */
+@Composable
+private fun StepButton(glyph: String, onClick: () -> Unit) {
+    Surface(
+        color = Color(0xFF1A2230),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .height(34.dp)
+            .widthIn(min = 34.dp)
+            .clickable { onClick() }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                glyph,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF00E5FF),
+                modifier = Modifier.padding(horizontal = 6.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modifier = Modifier) {
     androidx.compose.foundation.Canvas(modifier = modifier.fillMaxWidth().height(36.dp)) {

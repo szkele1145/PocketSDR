@@ -141,6 +141,16 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("favSortByFreq", true)
         set(v) { prefs.edit().putBoolean("favSortByFreq", v).apply() }
 
+    /**
+     * 步进调谐的档位序号（0 = 100kHz，1 = 25kHz，2 = 1kHz）。
+     *
+     * 存下来是因为这是使用习惯：找 FM 台用 100kHz 一格一格挪很慢，
+     * 而短波/对讲又需要 1kHz 细调。每次进来都要重新选很烦。
+     */
+    var tuneStepIndex: Int
+        get() = prefs.getInt("tuneStepIndex", 0)
+        set(v) { prefs.edit().putInt("tuneStepIndex", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()
