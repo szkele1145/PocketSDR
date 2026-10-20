@@ -185,11 +185,26 @@ if (-not $baseCommit -or -not $baseTree) { throw "Failed to fetch baseline (comm
 Write-Host "    base commit $baseCommit  base tree $baseTree"
 
 Write-Host "==> 2/8 Upload blobs"
+# Normalize CRLF to LF before uploading. With core.autocrlf=true a checkout
+# (e.g. the stash pop in step 8) rewrites working-copy line endings, so the
+# raw bytes of a text file change between runs even though its CONTENT did
+# not. Uploading raw bytes made the same logical version produce a different
+# blob sha on every other run, which defeated the resume logic in step 4 and
+# stacked duplicate commits onto main. Normalizing first makes the blob sha a
+# function of the file content alone - same as what git actually stores.
 $blobMap = @{}
 foreach ($f in $Files) {
     $full = Join-Path $Repo ($f -replace '/', '\')
     if (-not (Test-Path $full)) { throw "File not found: $f" }
-    $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($full))
+    $bytes = [IO.File]::ReadAllBytes($full)
+    $isText = $true
+    foreach ($b in $bytes) { if ($b -eq 0) { $isText = $false; break } }
+    if ($isText) {
+        $text = [Text.Encoding]::UTF8.GetString($bytes)
+        $text = $text.Replace("`r`n", "`n")
+        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+    }
+    $b64 = [Convert]::ToBase64String($bytes)
     [IO.File]::WriteAllText("$Tmp\blob.json", ('{"content":"' + $b64 + '","encoding":"base64"}'), $Utf8NoBom)
     $resp = Invoke-Gh "$ApiBase/git/blobs" -Method POST -BodyFile "$Tmp\blob.json" -EmptyRetries 3
     $sha = [regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value
@@ -223,21 +238,17 @@ Write-Host "    new tree $treeSha  $($newPaths.Count) files (baseline $($basePat
 
 Write-Host "==> 4/8 Create commit"
 # Idempotent resume: if a previous run already pushed a commit with THIS tree
-# on top of the SAME baseline (it died between step 5 and step 7 - e.g. a
-# transient "git.exe Access is denied" in step 6), re-creating the commit
-# would stack a content-identical duplicate on top of it. Detect that case
-# and reuse the existing commit instead.
+# (it died between step 5 and step 7 - e.g. a transient "git.exe Access is
+# denied" in step 6), re-creating the commit would stack a content-identical
+# duplicate on top of it. Look back through the recent history of main for a
+# commit that already carries this tree and reuse it.
 $commitSha = ""
-if ($baseTree -eq $treeSha) {
-    # The files to publish are byte-identical with what main already has:
-    # nothing to commit, reuse the current head.
-    $commitSha = $baseCommit
-    Write-Host "    tree unchanged, reusing main head $commitSha"
-} else {
-    $candidates = Get-Json "$ApiBase/commits/main`?per_page=1"
-    if ($candidates.commit.tree.sha -eq $treeSha) {
-        $commitSha = $candidates.sha
+$history = Get-Json "$ApiBase/commits?sha=main&per_page=10"
+foreach ($c in @($history)) {
+    if ($c.commit.tree.sha -eq $treeSha) {
+        $commitSha = $c.sha
         Write-Host "    found existing commit with this tree, reusing $commitSha (resume after partial publish)"
+        break
     }
 }
 if (-not $commitSha) {
@@ -256,23 +267,36 @@ $mainNow = (Get-Json "$ApiBase/branches/main").commit.sha
 if ($mainNow -eq $commitSha) {
     Write-Host "    main already at $commitSha, nothing to update"
 } else {
-    [IO.File]::WriteAllText("$Tmp\ref.json",
-        (ConvertTo-Json -InputObject @{ sha = $commitSha; force = $false } -Depth 3), $Utf8NoBom)
-    $ok = $false
-    for ($i = 1; $i -le 3; $i++) {
-        $resp = Invoke-Gh "$ApiBase/git/refs/heads/main" -Method PATCH -BodyFile "$Tmp\ref.json"
-        if ([regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value -eq $commitSha) {
-            $ok = $true; Write-Host "    updated (try $i)"; break
+    # If the reused commit is ALREADY in main's history, main is simply a
+    # later commit with equivalent content - moving main backwards is not
+    # allowed (and not needed).
+    $inHistory = $false
+    $hist = Get-Json "$ApiBase/commits?sha=main&per_page=20"
+    foreach ($c in @($hist)) { if ($c.sha -eq $commitSha) { $inHistory = $true; break } }
+    if ($inHistory) {
+        Write-Host "    commit $commitSha already in main's history, main stays at $mainNow"
+    } else {
+        [IO.File]::WriteAllText("$Tmp\ref.json",
+            (ConvertTo-Json -InputObject @{ sha = $commitSha; force = $false } -Depth 3), $Utf8NoBom)
+        $ok = $false
+        for ($i = 1; $i -le 3; $i++) {
+            $resp = Invoke-Gh "$ApiBase/git/refs/heads/main" -Method PATCH -BodyFile "$Tmp\ref.json"
+            if ([regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value -eq $commitSha) {
+                $ok = $true; Write-Host "    updated (try $i)"; break
+            }
+            Write-Host "    try $i failed, retrying"; Start-Sleep -Seconds 4
         }
-        Write-Host "    try $i failed, retrying"; Start-Sleep -Seconds 4
+        if (-not $ok) { throw "Failed to update main" }
     }
-    if (-not $ok) { throw "Failed to update main" }
 }
 
 Write-Host "==> 6/8 Verify remote tree matches local"
-$finalCommit = Get-Json "$ApiBase/commits/main"
-$finalTreeSha = $finalCommit.commit.tree.sha
-if ($finalTreeSha -ne $treeSha) { throw "main tree $finalTreeSha != pushed $treeSha" }
+# Compare against the tree of the commit we actually published. main may sit
+# on a later commit with equivalent content (a resumed publish), so main's
+# own head tree is not the right reference.
+$finalCommit = Get-Json "$ApiBase/git/commits/$commitSha"
+$finalTreeSha = $finalCommit.tree.sha
+if ($finalTreeSha -ne $treeSha) { throw "commit tree $finalTreeSha != pushed $treeSha" }
 $finalFull = Get-Json "$ApiBase/git/trees/$finalTreeSha`?recursive=1"
 $remoteMap = @{}
 foreach ($e in $finalFull.tree) { if ($e.type -eq "blob") { $remoteMap[$e.path] = $e.sha } }
@@ -283,7 +307,9 @@ try {
     foreach ($f in $tracked) {
         if (-not $remoteMap.ContainsKey($f)) { $bad += "missing on remote: $f"; continue }
         $p = Join-Path $Repo ($f -replace '/', '\')
-        $localHash = (Invoke-Git @("hash-object", "--no-filters", $p)).Trim()
+        # --path makes git apply the checkout filters (core.autocrlf), so the
+        # hash matches what the index and therefore the remote store hold.
+        $localHash = (Invoke-Git @("hash-object", "--path=$f", $p)).Trim()
         $remoteHash = $remoteMap[$f]
         if ($localHash -ne $remoteHash) {
             # CRLF vs LF does not count as a difference: compare normalized content.

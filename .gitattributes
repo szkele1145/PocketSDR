@@ -1,0 +1,37 @@
+# Normalize line endings for every text file in the repository.
+#
+# Why: with core.autocrlf=true, a checkout rewrites LF into CRLF in the
+# working copy. The publish script reads the working copy to build blobs, so
+# the same logical file produced a different blob sha on every other run.
+# That defeated the resume logic and stacked duplicate commits on main.
+#
+# With an explicit .gitattributes the checkout rule is the same on every
+# machine, and the scripts below keep their exact bytes.
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.ps1 text eol=lf
+*.sh text eol=lf
+*.kt text eol=lf
+*.kts text eol=lf
+*.java text eol=lf
+*.xml text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.pro text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.apk binary
+*.wav binary
+*.jar binary
+*.so binary
+*.zip binary
