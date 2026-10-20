@@ -24,7 +24,10 @@ $ErrorActionPreference = "Stop"
 $Repo      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ApiBase   = "https://api.github.com/repos/szkele1145/PocketSDR"
 $TokenFile = Join-Path $env:USERPROFILE ".dsh\gh.token"
-$Tmp       = "C:\Temp"
+# Keep temp files on the repo drive: C: is nearly full on this machine and a
+# 15 MB APK copy per release adds up fast (it filled C: once already).
+$Tmp       = Join-Path $Repo "build\publish_tmp"
+if (-not (Test-Path $Tmp)) { New-Item -ItemType Directory -Path $Tmp -Force | Out-Null }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 if (-not $Tag) { $Tag = "v$Version" }

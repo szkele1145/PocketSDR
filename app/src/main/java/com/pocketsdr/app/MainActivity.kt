@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity(), UiBridge {
      * 主界面据此显示提示条——「插了没反应」时用户至少知道下一步去哪。
      */
     private var usbPendingText by mutableStateOf<String?>(null)
+    /** 最近一次硬件连接失败的原因；不为空时优先占据主界面状态行，直到下次连接尝试 */
+    private var hwErrorText by mutableStateOf<String?>(null)
 
     // 瀑布 Bitmap 环形缓冲（1024 bin × 180 行）
     private val waterfallBmp = com.pocketsdr.app.ui.WaterfallBitmap(1024, 180)
@@ -165,7 +167,10 @@ class MainActivity : ComponentActivity(), UiBridge {
      * 用户插了棒子看到主界面毫无反应时，能立刻知道下一步去哪，而不是干等。
      */
     private fun refreshUsbPending() {
-        if (engine?.isRealSource == true) { usbPendingText = null; return }
+        if (engine?.isRealSource == true) { hwErrorText = null; usbPendingText = null; return }
+        // 硬件连接失败的具体原因比「待授权」更值得留在屏幕上——它才是用户排查的线索。
+        // 只有真机连上（上面那行）或下一次连接尝试才会清掉它。
+        if (hwErrorText != null) { usbPendingText = hwErrorText; return }
         val entries = try { UsbDiag.snapshot(usbManager) } catch (_: Exception) { emptyList() }
         usbPendingText = when {
             entries.isEmpty() -> null
@@ -237,8 +242,14 @@ class MainActivity : ComponentActivity(), UiBridge {
             pushStatus("硬件初始化失败: ${e.message?.take(60)}")
             try { src?.close() } catch (_: Exception) {}
             try { conn.close() } catch (_: Exception) {}
+            // 失败原因必须留住且看得见：switchToSimulated 会把状态行改成「仿真模式」，
+            // 用户只看到一秒钟的报错就没了，真机排查时等于没有线索。
+            hwErrorText = "⚠ 硬件连接失败：${e.message?.take(70) ?: "未知原因"}（点这里到 USB 诊断）"
             switchToSimulated()
+            refreshUsbPending()
+            return
         }
+        hwErrorText = null
         refreshUsbPending()
     }
 
