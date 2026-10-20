@@ -33,26 +33,9 @@ import com.pocketsdr.app.SdrEngine
 import kotlinx.coroutines.launch
 
 /**
- * 步进调谐档位。
- *
- * FM 广播台间隔 100/200kHz，用 100kHz 一格格挪最合适；
- * 航空对讲/业余无线电是 25kHz 频道；
- * 短波台挤得密，要 1kHz 才挪得动。
- *
- * [mode] 是这个档位最推荐的接收模式——切到该模式时自动切到这一档，
- * 用户不用记「航空对讲要用 25k」这种规则。
+ * 步进的合法频段边界：长波 100kHz 到 L 波段 1.7GHz。
+ * 越界后硬件会直接拒绝调谐，用户看到的只是「按了没反应」——所以这里先钳住。
  */
-private data class TuneStep(val label: String, val hz: Long, val modes: List<SdrEngine.Mode>)
-
-private val TuneSteps = listOf(
-    TuneStep("100k", 100_000L, listOf(SdrEngine.Mode.WFM)),
-    // 25k 同时对应航空对讲（AM）和业余/对讲 UHF（NFM）——两边的频道间隔都是 25kHz
-    TuneStep("25k", 25_000L, listOf(SdrEngine.Mode.AM, SdrEngine.Mode.NFM)),
-    TuneStep("1k", 1_000L, listOf(SdrEngine.Mode.USB, SdrEngine.Mode.LSB))
-)
-
-// 步进的合法频段边界：长波 100kHz 到 L 波段 1.7GHz。
-// 越界后硬件会直接拒绝调谐，用户看到的只是「按了没反应」——所以这里先钳住。
 private const val TuneMinHz = 100_000L
 private const val TuneMaxHz = 1_700_000_000L
 
@@ -113,8 +96,6 @@ fun RxPage(
     var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     // 收藏列表快照：弹窗里增删后必须回写这里，否则底部 ★ 角标和列表都不刷新
     var favorites by remember { mutableStateOf(store.getFavorites()) }
-    // 步进调谐档位（0=100kHz 1=25kHz 2=1kHz），存盘记住用户习惯
-    var tuneStepIdx by remember { mutableStateOf(store.tuneStepIndex.coerceIn(0, TuneSteps.size - 1)) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
     // 轮询落后于手指时基准就错了，越拖越偏。现在拖动自己累积基准，抬指才交还引擎。
     var dragBase by remember { mutableStateOf<Long?>(null) }
@@ -162,16 +143,8 @@ fun RxPage(
                 store.lastMode = FreqStore.modeIndex(newMode)
                 // 换模式：不同调制的 dB 尺度不同，历史曲线没有可比性
                 signalHistory.clear()
-                // 步进档位跟着模式走（除非用户自己选过）：
-                // FM 广播台隔 100/200kHz，航空对讲/业余无线电是 25kHz 频道，
-                // 短波 USB/LSB 挤在 1kHz 级别。档位不跟，用户就得自己记规则。
-                if (store.tuneStepAuto) {
-                    val recommended = TuneSteps.indexOfFirst { newMode in it.modes }
-                    if (recommended >= 0 && recommended != tuneStepIdx) {
-                        tuneStepIdx = recommended
-                        store.tuneStepIndex = recommended
-                    }
-                }
+                // 步进档位跟着模式走（除非用户自己选过）——
+                // 这个逻辑在 StepButtons 组件里，靠 LaunchedEffect(mode) 响应
             }
             recording = engine.isRecording
             recordingPaused = engine.recordingPaused
@@ -391,63 +364,6 @@ fun RxPage(
                             }
                         }
                     }
-                    // 步进调谐：SDR 的基本操作。
-                    // 以前主界面没有这个，粗调到台附近后想微调只能反复开输入框输数字——
-                    // 而「点大频率开输入框」那个框还会挡住频谱。
-                    // 档位可点，循环 100k → 25k → 1k，选了记在盘上。
-                    val step = TuneSteps[tuneStepIdx]
-                    // 步进要钳在合法频段内：一直按 ▶ 会一路走到几 GHz 之外，
-                    // 硬件会拒绝调谐，用户看到的却是「按了没反应」。
-                    val atLow = engine.tunedFreq - step.hz < TuneMinHz
-                    val atHigh = engine.tunedFreq + step.hz > TuneMaxHz
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StepButton("◀", dim = atLow) {
-                            val nt = (engine.tunedFreq - step.hz).coerceAtLeast(TuneMinHz)
-                            if (nt == engine.tunedFreq) return@StepButton
-                            engine.tuneTo(nt)
-                            tuned = nt
-                        }
-                        Surface(
-                            color = Color(0xFF1A2230),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .height(34.dp)
-                                .widthIn(min = 44.dp)
-                                .clickable {
-                                    // 用户亲手选档位 = 显式选择，不再自动跟模式。
-                                    // 想回到自动：再点一圈回到当前模式的推荐档即可
-                                    //（推荐档会重新打开自动，见下）。
-                                    val next = (tuneStepIdx + 1) % TuneSteps.size
-                                    val recommended = TuneSteps.indexOfFirst { mode in it.modes }
-                                    if (recommended >= 0 && next == recommended) {
-                                        store.tuneStepAuto = true
-                                    } else {
-                                        store.tuneStepAuto = false
-                                    }
-                                    tuneStepIdx = next
-                                    store.tuneStepIndex = next
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    step.label,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    // 自动模式青色（跟 UI 主色一致），手动选择后灰——
-                                    // 用户能看出档位是自动推荐的还是自己锁定的
-                                    color = if (store.tuneStepAuto) Color(0xFF00E5FF) else Color(0xFF8FA3B8),
-                                    modifier = Modifier.padding(horizontal = 6.dp)
-                                )
-                            }
-                        }
-                        StepButton("▶", dim = atHigh) {
-                            val nt = (engine.tunedFreq + step.hz).coerceAtMost(TuneMaxHz)
-                            if (nt == engine.tunedFreq) return@StepButton
-                            engine.tuneTo(nt)
-                            tuned = nt
-                        }
-                    }
-                    Spacer(Modifier.width(6.dp))
                     // ★ 一键收藏/取消：当前频率是否已收藏一眼可见，一点即切，不用进弹窗
                     val isFav = favorites.any { it.freq == tuned }
                     Surface(
@@ -538,7 +454,7 @@ fun RxPage(
                             )
                         }
                     }
-                    StepButtons(engine, mode) { tuned = engine.tunedFreq }
+                    StepButtons(engine, mode, store) { tuned = engine.tunedFreq }
                     Text("音量", fontSize = 11.sp, color = Color(0xFF5A6B7F))
                     Slider(
                         value = volume,
@@ -749,65 +665,112 @@ private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 步进按钮对（默认随模式自适应；轻点步进标签可循环切换步长，按住连跳，松手即停） */
+/**
+ * 步进按钮对（默认随模式自适应；轻点步长标签可循环切换步长，按住连跳，松手即停）。
+ *
+ * 档位表覆盖广播/业余常用信道间隔：12.5kHz 和 9kHz 都是业余无线电的
+ * 标准信道间隔，25kHz 是航空对讲，1kHz 留给短波。
+ */
 @Composable
-private fun StepButtons(engine: SdrEngine, mode: SdrEngine.Mode, onTuned: () -> Unit) {
-    // 可选步长表：覆盖广播/业余常用信道间隔，点一下换一档
+private fun StepButtons(
+    engine: SdrEngine,
+    mode: SdrEngine.Mode,
+    store: FreqStore,
+    onTuned: () -> Unit
+) {
     val steps = listOf(1_000L, 5_000L, 9_000L, 10_000L, 12_500L, 25_000L, 50_000L, 100_000L, 1_000_000L)
-    fun defaultIndex(m: SdrEngine.Mode): Int = when (m) {
-        SdrEngine.Mode.WFM -> steps.indexOf(100_000L)
-        SdrEngine.Mode.NFM -> steps.indexOf(12_500L)
-        SdrEngine.Mode.AM -> steps.indexOf(25_000L)
-        else -> steps.indexOf(1_000L)
+    fun defaultStep(m: SdrEngine.Mode): Long = when (m) {
+        SdrEngine.Mode.WFM -> 100_000L
+        SdrEngine.Mode.NFM -> 12_500L
+        SdrEngine.Mode.AM -> 25_000L
+        else -> 1_000L
     }
-    // 模式切换时回到该模式默认档；用户手动选过的档位在换模式后重置
-    var stepIndex by remember(mode) { mutableStateOf(defaultIndex(mode)) }
-    val step = steps[stepIndex]
+    // 档位来源有两种：用户自己挑的（记在盘上，跨模式、跨次启动都保留），
+    // 或者跟随当前模式的推荐档。用户亲手挑过就不再被模式覆盖——
+    // 否则用户每次切模式都要重新挑一次，那是白干。
+    val manual = store.tuneStepHz.takeIf { it > 0 && it in steps }
+    val recommended = defaultStep(mode)
+    var stepHz by remember { mutableStateOf(manual ?: recommended) }
+    // 模式变了：自动模式下跟着换档；手动模式保持用户选的
+    LaunchedEffect(mode) {
+        if (!store.tuneStepAuto) {
+            val keep = store.tuneStepHz.takeIf { it > 0 && it in steps }
+            if (keep != null) stepHz = keep
+        } else {
+            stepHz = recommended
+        }
+    }
+    val step = stepHz
     val stepLabel = when {
         step >= 1_000_000 -> "%.1fM".format(step / 1e6)
         step >= 1_000 -> if (step % 1_000 == 0L) "${step / 1_000}k" else "%.1fk".format(step / 1e3)
         else -> "${step}Hz"
     }
+    // 到频段边界时箭头置灰：越界后硬件会拒绝调谐，用户看到的只是「按了没反应」。
+    val atLow = engine.tunedFreq - step < TuneMinHz
+    val atHigh = engine.tunedFreq + step > TuneMaxHz
     Row(verticalAlignment = Alignment.CenterVertically) {
-        StepArrow(up = false, step = step, engine = engine, onTuned = onTuned)
-        // 步长标签本身就是切换按钮：点一下进一档（循环），不必去设置页翻
+        StepArrow(up = false, step = step, engine = engine, dim = atLow, onTuned = onTuned)
+        // 步长标签本身就是切换按钮：点一下进一档（循环），不必去设置页翻。
+        // 点回当前模式的推荐档 = 交还给自动；选了别的档 = 锁定为手动。
         Surface(
             color = Color(0xFF1A2230),
             shape = RoundedCornerShape(6.dp),
             modifier = Modifier
-                .clickable { stepIndex = (stepIndex + 1) % steps.size }
+                .clickable {
+                    val next = steps[(steps.indexOf(step) + 1).mod(steps.size)]
+                    store.tuneStepAuto = (next == recommended)
+                    store.tuneStepHz = next
+                    stepHz = next
+                }
         ) {
             Text(
-                stepLabel, fontSize = 10.sp, color = Color(0xFF00E5FF),
+                stepLabel, fontSize = 10.sp,
+                // 青色 = 跟随模式的推荐档；灰色 = 用户自己锁定的
+                color = if (store.tuneStepAuto) Color(0xFF00E5FF) else Color(0xFF8FA3B8),
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
             )
         }
-        StepArrow(up = true, step = step, engine = engine, onTuned = onTuned)
+        StepArrow(up = true, step = step, engine = engine, dim = atHigh, onTuned = onTuned)
     }
 }
 
 /**
  * 单个步进箭头。手势全部自己处理，不再叠 IconButton.onClick，
  * 避免"点一下却跳两步"以及松手后又多跳一次的老问题。
+ *
+ * [dim] = 已到频段边界，按下去不会有变化（置灰提示）。
  */
 @Composable
-private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () -> Unit) {
+private fun StepArrow(
+    up: Boolean,
+    step: Long,
+    engine: SdrEngine,
+    dim: Boolean = false,
+    onTuned: () -> Unit
+) {
     val scope = rememberCoroutineScope()
+    // 步进要钳在合法频段内：一直按着不放会一路走出频段，
+    // 硬件直接拒绝调谐，用户看到的只是「按了没反应」。
+    fun stepOnce() {
+        val dir = if (up) step else -step
+        val target = (engine.tunedFreq + dir).coerceIn(TuneMinHz, TuneMaxHz)
+        if (target == engine.tunedFreq) return
+        engine.tuneWithinSpan(target)
+        onTuned()
+    }
     Box(
         modifier = Modifier
             .size(46.dp)
             .pointerInput(step, up) {
                 detectTapGestures(onPress = {
-                    val dir = if (up) step else -step
                     // 按下立刻走一步，手感跟手
-                    engine.tuneWithinSpan(engine.tunedFreq + dir)
-                    onTuned()
+                    stepOnce()
                     val job = scope.launch {
                         kotlinx.coroutines.delay(400)   // 长按判定门槛
                         while (true) {
-                            engine.tuneWithinSpan(engine.tunedFreq + dir)
-                            onTuned()
+                            stepOnce()
                             kotlinx.coroutines.delay(60)
                         }
                     }
@@ -820,7 +783,7 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
         Icon(
             if (up) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
             if (up) "步进+" else "步进-",
-            tint = Color(0xFF00E5FF),
+            tint = if (dim) Color(0xFF3C4A5A) else Color(0xFF00E5FF),
             modifier = Modifier.size(32.dp)
         )
     }
@@ -835,34 +798,6 @@ private fun StepArrow(up: Boolean, step: Long, engine: SdrEngine, onTuned: () ->
  * 每个点连同当时的调谐频率一起记录：换了台之后，旧台的强度和新台画在同一条线上
  * 会误导用户（看着像信号突然掉了，其实只是换了个频点）。所以频率一变，曲线就断开。
  */
-/**
- * 步进调谐的单向按钮（◀ / ▶）。
- *
- * [dim] = 已到频段边界，按下去不会有任何变化——用灰色告诉用户「到头了」，
- * 而不是让人对着一个没反应的按钮反复点。
- */
-@Composable
-private fun StepButton(glyph: String, dim: Boolean = false, onClick: () -> Unit) {
-    Surface(
-        color = Color(0xFF1A2230),
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier
-            .height(34.dp)
-            .widthIn(min = 34.dp)
-            .clickable { onClick() }
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                glyph,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (dim) Color(0xFF3C4A5A) else Color(0xFF00E5FF),
-                modifier = Modifier.padding(horizontal = 6.dp)
-            )
-        }
-    }
-}
-
 @Composable
 private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modifier = Modifier) {
     androidx.compose.foundation.Canvas(modifier = modifier.fillMaxWidth().height(36.dp)) {

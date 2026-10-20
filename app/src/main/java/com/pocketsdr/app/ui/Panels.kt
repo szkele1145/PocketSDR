@@ -357,12 +357,15 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                 )
                             }
                             Column(Modifier.weight(1f)) {
-                                Text(f.name, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                                // 原始文件名长这样：sdr_20261021_023015_98300kHz.wav
+                                // 直接甩给用户等于让人自己数数字。解析成
+                                // 「98.300 MHz · 10-21 02:30」才是人能读的东西。
+                                val nic = niceRecordingLabel(f)
+                                Text(nic.title, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                                     color = if (isPlaying) Color(0xFFF6D55C) else Color(0xFFD0DAE4),
                                     maxLines = 1)
                                 Text(
-                                    "${SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(f.lastModified()))}  " +
-                                        wavDuration(f) + "  %.1fMB".format(f.length() / 1e6),
+                                    "${nic.sub}  " + wavDuration(f) + "  %.1fMB".format(f.length() / 1e6),
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F)
                                 )
                             }
@@ -398,6 +401,43 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
 private fun listWavFiles(context: android.content.Context): List<File> {
     val dir = File(context.getExternalFilesDir(null), "recordings")
     return dir.listFiles { f -> f.extension == "wav" }?.sortedByDescending { it.lastModified() } ?: emptyList()
+}
+
+/**
+ * 把录音文件名解析成能直接读的标题 + 副标题。
+ *
+ * 文件名由 WavRecorder 生成：sdr_yyyyMMdd_HHmmss_<频率kHz>.wav
+ * 例：sdr_20261021_023015_98300kHz.wav
+ *
+ * 录音最重要的是知道「录的是哪个台」——文件名里本来就有，但用户看到的是
+ * 机器名，得自己数数字。解析成「98.300 MHz」才是人能读的东西。
+ * 解析不了（老文件、手动改过名）就回退到原始文件名，不丢人。
+ */
+private data class RecLabel(val title: String, val sub: String)
+
+private val RecNameRe = Regex("""sdr_(\d{8})_(\d{6})_(\d+)kHz\.wav""")
+
+private fun niceRecordingLabel(f: File): RecLabel {
+    val m = RecNameRe.find(f.name)
+    if (m == null) {
+        return RecLabel(f.name, SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(f.lastModified())))
+    }
+    val freqHz = m.groupValues[3].toLongOrNull()?.times(1000L)
+    val date = m.groupValues[1]   // yyyyMMdd
+    val time = m.groupValues[2]   // HHmmss
+    val title = if (freqHz != null) formatFreq(freqHz) else f.name
+    // 文件名里的日期时间本来就是格式化好的数字串，直接切片，
+    // 不用再 parse 成 Date（parse 还会受时区影响，纯属绕路）
+    val sub = try {
+        val mm = date.substring(4, 6)
+        val dd = date.substring(6, 8)
+        val hh = time.substring(0, 2)
+        val mi = time.substring(2, 4)
+        "$mm-$dd $hh:$mi"
+    } catch (_: Exception) {
+        "$date $time"
+    }
+    return RecLabel(title, sub)
 }
 
 private fun wavDuration(f: File): String {

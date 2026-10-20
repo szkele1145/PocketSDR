@@ -142,14 +142,17 @@ class FreqStore(private val context: Context) {
         set(v) { prefs.edit().putBoolean("favSortByFreq", v).apply() }
 
     /**
-     * 步进调谐的档位序号（0 = 100kHz，1 = 25kHz，2 = 1kHz）。
+     * 步进档位，存的是**步长值（Hz）**而不是列表序号。
      *
-     * 存下来是因为这是使用习惯：找 FM 台用 100kHz 一格一格挪很慢，
+     * 存值不存序号：档位表以后增删档（比如加个 9kHz 业余信道间隔），
+     * 存序号的话老用户存的序号会指向另一个档位，存的步长值则永远是对的。
+     *
+     * 这是使用习惯：找 FM 台用 100kHz 一格一格挪很慢，
      * 而短波/对讲又需要 1kHz 细调。每次进来都要重新选很烦。
      */
-    var tuneStepIndex: Int
-        get() = prefs.getInt("tuneStepIndex", 0)
-        set(v) { prefs.edit().putInt("tuneStepIndex", v).apply() }
+    var tuneStepHz: Long
+        get() = prefs.getLong("tuneStepHz", 0L)
+        set(v) { prefs.edit().putLong("tuneStepHz", v).apply() }
 
     /**
      * 步进档位是否跟随接收模式自动调整。
