@@ -363,9 +363,13 @@ fun LogDialog(onDismiss: () -> Unit) {
         confirmButton = {
             val context = LocalContext.current
             TextButton(onClick = {
+                // 落盘失败必须说：返回 null 时以前是静默的，
+                // 用户点了「落盘」什么都没发生，以为按钮坏了。
                 com.pocketsdr.app.SdrLog.save(context)?.let {
                     android.widget.Toast.makeText(context, "已保存: $it", android.widget.Toast.LENGTH_SHORT).show()
-                }
+                } ?: android.widget.Toast.makeText(
+                    context, "日志落盘失败（存储不可用）", android.widget.Toast.LENGTH_SHORT
+                ).show()
             }) { Text("落盘") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
@@ -379,6 +383,10 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
     var files by remember { mutableStateOf(listWavFiles(context)) }
     // 播放器：对话框内单实例，正在播的条目高亮 + 图标切换
     var playingPath by remember { mutableStateOf<String?>(null) }
+    // 播放/分享/删除的失败原因。
+    // 以前这三处都是空 catch：点播放没反应、点分享没反应、删除后文件又回来了，
+    // 全都没有任何提示，用户完全不知道发生了什么。
+    var recNote by remember { mutableStateOf<String?>(null) }
     val player = remember { android.media.MediaPlayer() }
     DisposableEffect(Unit) {
         onDispose {
@@ -394,6 +402,15 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
         onDismissRequest = { stopPlay(); onDismiss() },
         title = { Text("录音文件 (${files.size})") },
         text = {
+            Column {
+                // 失败提示放在最上面：播放/分享/删除都可能失败，
+                // 不说的话用户只会看到「点了没反应」。
+                val note = recNote
+                if (note != null) {
+                    Text("⚠ $note", fontSize = 11.sp, color = Color(0xFFFF6B6B))
+                    androidx.compose.foundation.layout.Spacer(
+                        androidx.compose.ui.Modifier.height(4.dp))
+                }
             if (files.isEmpty()) {
                 Text("暂无录音。设置页点「⏺ 录音」开始。", fontSize = 13.sp)
             } else {
@@ -406,6 +423,7 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                         ) {
                             IconButton(onClick = {
                                 if (isPlaying) { stopPlay(); return@IconButton }
+                                recNote = null
                                 try {
                                     player.reset()
                                     player.setDataSource(f.absolutePath)
@@ -413,7 +431,12 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                     player.start()
                                     playingPath = f.absolutePath
                                     player.setOnCompletionListener { playingPath = null }
-                                } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                                    // 播放失败必须说出来：文件损坏/被删/编码不支持时，
+                                    // 以前是空 catch，用户只看到「点了没反应」。
+                                    playingPath = null
+                                    recNote = "无法播放 ${f.name}：${e.message?.takeIf { it.isNotBlank() } ?: "文件可能已损坏"}"
+                                }
                             }, modifier = Modifier.padding(0.dp)) {
                                 Icon(
                                     if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow,
@@ -436,6 +459,7 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                 )
                             }
                             IconButton(onClick = {
+                                recNote = null
                                 try {
                                     val uri = androidx.core.content.FileProvider.getUriForFile(
                                         context, context.packageName + ".files", f)
@@ -445,19 +469,30 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                             putExtra(android.content.Intent.EXTRA_STREAM, uri)
                                             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }, "分享录音"))
-                                } catch (_: Exception) {}
+                                } catch (e: Exception) {
+                                    // 分享失败（没有可接收的应用 / 路径未被 provider 覆盖）
+                                    // 以前是空 catch：点分享完全没反应。
+                                    recNote = "无法分享 ${f.name}：${e.message?.takeIf { it.isNotBlank() } ?: "没有可用的分享应用"}"
+                                }
                             }, modifier = Modifier.padding(0.dp)) {
                                 Icon(Icons.Filled.Share, "分享", tint = Color(0xFF7DF3FF))
                             }
                             IconButton(onClick = {
+                                recNote = null
                                 if (isPlaying) stopPlay()
-                                f.delete(); files = listWavFiles(context)
+                                // 删除失败必须说明：以前不管成没成功都刷新列表，
+                                // 删除不掉的文件会「又回来了」，看起来像删除没生效。
+                                if (!f.delete()) {
+                                    recNote = "无法删除 ${f.name}（文件被占用或没有权限）"
+                                }
+                                files = listWavFiles(context)
                             }) {
                                 Icon(Icons.Filled.Delete, "删除", tint = Color(0xFF5A6B7F))
                             }
                         }
                     }
                 }
+            }
             }
         },
         confirmButton = { TextButton(onClick = { stopPlay(); onDismiss() }) { Text("关闭") } }
