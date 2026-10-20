@@ -78,21 +78,51 @@ fun FreqInputDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     val recents = remember { store.getRecents().toMutableList() }
     var text by remember { mutableStateOf("") }
+    /** 已通过常用频段跳到的频率（null = 没跳过） */
+    var jumped by remember { mutableStateOf<Long?>(null) }
+    // 输入校验：以前输入非法频率（比如 9999 或 abc）点了「调谐」什么也不发生，
+    // 对话框直接关掉——用户完全不知道自己输错了，更不知道该输什么。
+    val parsedMhz = remember(text) {
+        text.trim().replace('．', '.').replace(',', '.').replace('。', '.').toFloatOrNull()
+    }
+    val freqError: String? = remember(text) {
+        val raw = text.trim()
+        when {
+            raw.isEmpty() -> null                 // 空着不算错，只是还没输
+            parsedMhz == null -> "看不懂这个输入，请填数字，比如 98.1"
+            parsedMhz < 0.1f -> "频率太小了，最少 0.1 MHz"
+            parsedMhz > 1800f -> "太大了，SDR 最多到 1800 MHz"
+            else -> null
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("输入频率 (MHz)") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 整体限高可滚：输入框 + 最近列表 + 常用频段叠起来可能超过对话框高度，
+            // 超出部分会被裁掉，用户看不到底下的频段预设
+            Column(
+                Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = text, onValueChange = { text = it },
                     placeholder = { Text("98.1") }, singleLine = true,
+                    isError = freqError != null,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
                     )
                 )
+                // 明确的错误提示：告诉用户哪里错了、该填什么
+                freqError?.let {
+                    Text(it, fontSize = 12.sp, color = Color(0xFFFF6B6B))
+                }
                 if (recents.isNotEmpty()) {
                     Text("最近", fontSize = 12.sp, color = Color(0xFF5A6B7F))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // 用可滚动的 Column 而不是 Row：Row 放不下会溢出，且不能滚
+                    Column(
+                        Modifier.heightIn(max = 96.dp).verticalScroll(rememberScrollState())
+                    ) {
                         recents.forEach { f ->
                             TextButton(onClick = {
                                 text = "%.3f".format(f / 1_000_000f).trimEnd('0').trimEnd('.')
@@ -110,7 +140,8 @@ fun FreqInputDialog(
                                     engine.tuneTo(p.freqHz)
                                     engine.selectMode(p.mode)
                                     store.addRecent(p.freqHz)
-                                    onDismiss()
+                                    // 不关窗：可以连续试几个频段，选定后再点「取消」离开
+                                    jumped = p.freqHz
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -122,24 +153,34 @@ fun FreqInputDialog(
                         }
                     }
                 }
+                // 已跳到哪个频段：告诉用户现在在听哪儿，也提示怎么回去
+                jumped?.let { f ->
+                    Text("已跳到 ${formatFreq(f)} · 点「取消」返回主界面",
+                        fontSize = 12.sp, color = Color(0xFF00E5FF))
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val n = text.trim().replace('．', '.').replace(',', '.').replace('。', '.')
-                n.toFloatOrNull()?.let { mhz ->
+            TextButton(
+                enabled = parsedMhz != null && freqError == null,
+                onClick = {
+                    val mhz = parsedMhz ?: return@TextButton
                     if (mhz in 0.1f..1800f) {
                         val hz = (mhz * 1_000_000).toLong()
                         engine.tuneTo(hz)
                         store.addRecent(hz)
                     }
+                    // 输入非法时不关窗：留在原地让用户改，
+                    // 关掉等于把「你输错了」这件事藏起来
+                    if (freqError == null) onDismiss()
                 }
-                onDismiss()
-            }) { Text("调谐") }
+            ) { Text("调谐") }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onDismiss) { Text("取消") }
+                // 「返回」而不是「取消」：这个对话框现在也能用来连续试频段，
+                // 「取消」听起来像「撤销刚才的操作」，会误导
+                TextButton(onClick = onDismiss) { Text("返回") }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onAddFavorite) { Text("★ 收藏当前") }
             }
