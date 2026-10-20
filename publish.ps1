@@ -55,6 +55,28 @@ function Get-Json {
     return ($raw | ConvertFrom-Json)
 }
 
+# Restore the auto-stash created in step 8.
+#
+# The stash is made against the OLD head, so popping it after a reset onto the
+# NEW published commit can conflict (3-way merge with a stale base). The
+# stashed content is already part of the new commit, so "ours" (the new HEAD)
+# is the right resolution: taking "theirs" would resurrect the pre-publish
+# version of the file and silently undo the release in the worktree.
+function Restore-Stash {
+    $list = (git stash list) | Out-String
+    if (-not $list.Trim()) { return }
+    git stash pop 2>&1 | Out-String
+    $unmerged = @(git diff --name-only --diff-filter=U)
+    if ($unmerged.Count -gt 0) {
+        Write-Host "    $($unmerged.Count) conflict(s) after stash pop; keeping published version"
+        foreach ($u in $unmerged) {
+            git checkout --ours -- $u 2>&1 | Out-String
+            git add -- $u 2>&1 | Out-String
+        }
+    }
+    Write-Host "    stashed changes restored"
+}
+
 Write-Host "==> 1/8 Fetch remote main baseline"
 $remote = Get-Json "$ApiBase/branches/main"
 $baseCommit = $remote.commit.sha
@@ -214,21 +236,24 @@ try {
     }
     if ($fetched) {
         git reset --hard origin/main 2>&1 | Out-String
+        # Pop after the reset: the stash base is the OLD head, so git does a
+        # 3-way merge against a stale base and may report conflicts. The stashed
+        # content is already IN the new commit, so "ours" (the new HEAD) is the
+        # correct resolution - taking "theirs" would resurrect the old version.
+        Restore-Stash
     } else {
         # git transport is down (connection reset). Resetting to the stale
         # origin/main would move the worktree BACKWARD, undoing what we just
         # published - that is exactly what happened after v2.45.0.
         # Rebuild the published commit locally instead, using the GitHub API:
-        # the worktree content is already identical to the remote tree, so
-        # write-tree must reproduce the remote tree sha. If it does not, the
-        # local content drifted and we must NOT reset (it would lose work).
+        # restore the stashed changes first (base still matches, no conflict),
+        # then write-tree must reproduce the remote tree sha. If it does not,
+        # the local content drifted and we must NOT reset (it would lose work).
         Write-Host "    git fetch failed; rebuilding commit locally via GitHub API"
+        Restore-Stash
         $rc = Get-Json "$ApiBase/git/commits/$commitSha"
         $remoteTree = $rc.tree.sha
         $remoteParent = @($rc.parents)[0].sha
-        # The index still holds the pre-publish state; refresh it from the
-        # worktree so write-tree sees this release's changes (the worktree is
-        # clean here: anything else was stashed above).
         git add -A 2>&1 | Out-String
         $localTree = (git write-tree 2>&1 | Out-String).Trim()
         if ($localTree -ne $remoteTree) {
@@ -246,10 +271,6 @@ try {
         $localCommit = (git commit-tree $remoteTree -p $remoteParent -m $rc.message 2>&1 | Out-String).Trim()
         Write-Host "    local commit $localCommit (remote $commitSha)"
         git reset --hard $localCommit 2>&1 | Out-String
-    }
-    if ($dirty.Count -gt 0) {
-        git stash pop 2>&1 | Out-String
-        Write-Host "    stashed changes restored"
     }
 } finally { Pop-Location }
 Write-Host "local synced to origin/main: $(git -C $Repo rev-parse --short HEAD)"

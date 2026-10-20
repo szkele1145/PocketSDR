@@ -148,6 +148,12 @@ class MainActivity : ComponentActivity(), UiBridge {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     val d = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (granted && d != null) switchToHardware(d)
+                    else if (!granted) {
+                        // 用户点了「拒绝」，或系统授权弹窗超时/被跳过。
+                        // 以前这里什么都不做，用户看到主界面毫无反应，
+                        // 只能猜是不是设备坏了——必须说清楚发生了什么、下一步去哪。
+                        hwErrorText = "⚠ 未获得 USB 授权，读不到设备（点这里到 USB 诊断手动连接）"
+                    }
                     refreshUsbPending()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -192,6 +198,15 @@ class MainActivity : ComponentActivity(), UiBridge {
             PendingIntent.FLAG_MUTABLE
         )
         usbManager.requestPermission(device, pi)
+        // 有些 ROM 根本弹不出授权框（或者被用户忽略），那样就不会有
+        // ACTION_USB_PERMISSION 广播回来——界面会毫无反应，像坏了。
+        // 延时检查一次，没拿到授权就明确告诉用户下一步去哪。
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (engine?.isRealSource != true && !usbManager.hasPermission(device)) {
+                hwErrorText = "⚠ 没等到 USB 授权弹窗（点这里到 USB 诊断手动连接）"
+                refreshUsbPending()
+            }
+        }, 2500)
     }
 
     /**
