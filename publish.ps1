@@ -30,6 +30,15 @@ $Tmp       = Join-Path $Repo "build\publish_tmp"
 if (-not (Test-Path $Tmp)) { New-Item -ItemType Directory -Path $Tmp -Force | Out-Null }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+# Full transcript to a log file.
+#
+# The v2.49.0 publish died inside step 8 with NO visible error: the console
+# output was cut off after step 4 and the script left the stash unpopped, so
+# there was no way to tell which sub-step failed. A log file makes every
+# failure diagnosable after the fact - the log path is printed at the end.
+$LogFile = Join-Path $Tmp "publish_$Version.log"
+try { Start-Transcript -Path $LogFile -Force | Out-Null } catch { $LogFile = "" }
+
 if (-not $Tag) { $Tag = "v$Version" }
 $Token = (Get-Content $TokenFile -Raw).Trim()
 $H = "Authorization: token $Token"
@@ -53,6 +62,36 @@ function Invoke-Gh {
         }
     }
     return $resp
+}
+
+# Run a git command without letting its stderr become a terminating exception.
+#
+# With $ErrorActionPreference = "Stop", PowerShell turns ANY native stderr
+# output into a terminating error - even when the command succeeds. Git
+# prints progress/warnings on stderr routinely, so `git fetch -q ... 2>&1`
+# could abort the publish before it even started (this is what killed the
+# v2.49.0 publish in step 8, leaving the stash unpopped and no visible error).
+#
+# Usage: Invoke-Git @("fetch","-q","origin","main")
+#        Invoke-Git @("rev-parse","HEAD")   -> returns stdout as string
+#
+# NOTE: the parameter must NOT be named $Args - that is a PowerShell automatic
+# variable and shadowing it makes git receive an empty argument list (git then
+# prints its usage text and exits 1).
+function Invoke-Git {
+    param([string[]]$GitArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = (& git @GitArgs 2>&1) | Out-String
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($code -ne 0 -and $GitArgs[0] -eq "fetch") {
+        Write-Host "    git $($GitArgs -join ' ') failed (exit $code)"
+    }
+    return $out
 }
 
 function Get-Json {
@@ -85,15 +124,15 @@ function Get-Json {
 # is the right resolution: taking "theirs" would resurrect the pre-publish
 # version of the file and silently undo the release in the worktree.
 function Restore-Stash {
-    $list = (git stash list) | Out-String
+    $list = Invoke-Git @("stash", "list")
     if (-not $list.Trim()) { return }
-    git stash pop 2>&1 | Out-String
-    $unmerged = @(git diff --name-only --diff-filter=U)
+    Invoke-Git @("stash", "pop") | Out-Null
+    $unmerged = @((Invoke-Git @("diff", "--name-only", "--diff-filter=U")) -split "`r?`n" | Where-Object { $_.Trim() })
     if ($unmerged.Count -gt 0) {
         Write-Host "    $($unmerged.Count) conflict(s) after stash pop; keeping published version"
         foreach ($u in $unmerged) {
-            git checkout --ours -- $u 2>&1 | Out-String
-            git add -- $u 2>&1 | Out-String
+            Invoke-Git @("checkout", "--ours", "--", $u) | Out-Null
+            Invoke-Git @("add", "--", $u) | Out-Null
         }
     }
     Write-Host "    stashed changes restored"
@@ -174,11 +213,11 @@ foreach ($e in $finalFull.tree) { if ($e.type -eq "blob") { $remoteMap[$e.path] 
 Push-Location $Repo
 $bad = @()
 try {
-    $tracked = @(git ls-files)
+    $tracked = @((Invoke-Git @("ls-files")) -split "`r?`n" | Where-Object { $_.Trim() })
     foreach ($f in $tracked) {
         if (-not $remoteMap.ContainsKey($f)) { $bad += "missing on remote: $f"; continue }
         $p = Join-Path $Repo ($f -replace '/', '\')
-        $localHash = (git hash-object --no-filters $p).Trim()
+        $localHash = (Invoke-Git @("hash-object", "--no-filters", $p)).Trim()
         $remoteHash = $remoteMap[$f]
         if ($localHash -ne $remoteHash) {
             # CRLF vs LF does not count as a difference: compare normalized content.
@@ -244,20 +283,20 @@ Push-Location $Repo
 try {
     # Snapshot uncommitted changes BEFORE the hard reset: reset --hard would discard
     # them (that is how v2.36.0 lost a script fix). Stash first, restore after.
-    $dirty = @(git status --porcelain)
+    $dirty = @((Invoke-Git @("status", "--porcelain")) -split "`r?`n" | Where-Object { $_.Trim() })
     if ($dirty.Count -gt 0) {
         Write-Host "    $($dirty.Count) uncommitted change(s), stashing"
-        git stash push -u -m "publish.ps1 auto-stash" 2>&1 | Out-String
+        Invoke-Git @("stash", "push", "-u", "-m", "publish.ps1 auto-stash") | Out-Null
     }
     $fetched = $false
     for ($i = 1; $i -le 3; $i++) {
-        # -q suppresses progress: PS 5.1 turns stderr into an exception under Stop.
-        git fetch -q origin main 2>&1 | Out-String
+        $fr = Invoke-Git @("fetch", "-q", "origin", "main")
         if ($LASTEXITCODE -eq 0) { $fetched = $true; break }
+        Write-Host "    fetch try $i failed: $($fr.Trim().Substring(0, [Math]::Min(120, $fr.Trim().Length)))"
         Start-Sleep -Seconds 5
     }
     if ($fetched) {
-        git reset --hard origin/main 2>&1 | Out-String
+        Invoke-Git @("reset", "--hard", "origin/main") | Out-Null
         # Pop after the reset: the stash base is the OLD head, so git does a
         # 3-way merge against a stale base and may report conflicts. The stashed
         # content is already IN the new commit, so "ours" (the new HEAD) is the
@@ -276,8 +315,11 @@ try {
         $rc = Get-Json "$ApiBase/git/commits/$commitSha"
         $remoteTree = $rc.tree.sha
         $remoteParent = @($rc.parents)[0].sha
-        git add -A 2>&1 | Out-String
-        $localTree = (git write-tree 2>&1 | Out-String).Trim()
+        Write-Host "    remote tree   $remoteTree"
+        Write-Host "    remote parent $remoteParent"
+        Invoke-Git @("add", "-A") | Out-Null
+        $localTree = (Invoke-Git @("write-tree")).Trim()
+        Write-Host "    local tree    $localTree"
         if ($localTree -ne $remoteTree) {
             throw "Local tree $localTree != remote tree $remoteTree - refusing to reset, local work would be lost"
         }
@@ -290,12 +332,17 @@ try {
         $env:GIT_COMMITTER_DATE = $rc.committer.date
         # Use the remote message so the rebuilt commit is byte-identical to the
         # published one (same tree + parent + author + committer + message).
-        $localCommit = (git commit-tree $remoteTree -p $remoteParent -m $rc.message 2>&1 | Out-String).Trim()
+        $localCommit = (Invoke-Git @("commit-tree", $remoteTree, "-p", $remoteParent, "-m", $rc.message)).Trim()
         Write-Host "    local commit $localCommit (remote $commitSha)"
-        git reset --hard $localCommit 2>&1 | Out-String
+        Invoke-Git @("reset", "--hard", $localCommit) | Out-Null
     }
 } finally { Pop-Location }
-Write-Host "local synced to origin/main: $(git -C $Repo rev-parse --short HEAD)"
+$headShort = (Invoke-Git @("-C", $Repo, "rev-parse", "--short", "HEAD")).Trim()
+Write-Host "local synced to origin/main: $headShort"
 
 Write-Host ""
 Write-Host "PUBLISHED: $Tag  commit $commitSha"
+if ($LogFile) {
+    Write-Host "log: $LogFile"
+    try { Stop-Transcript | Out-Null } catch {}
+}

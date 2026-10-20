@@ -332,14 +332,19 @@ fun RxPage(
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
                                 )
-                                // 状态行优先级：USB 断流告警 > 信号质量结论。
+                                // 状态行优先级：搜台中 > USB 断流告警 > 信号质量结论。
                                 // 硬件连接类的长提示已挪到顶部横幅（这里一行放不下会被截断），
                                 // 三者共占一行，避免小字堆叠把横屏频谱压扁
-                                val line = usbWarn ?: signalQualityText(signalDb, squelchOpen, squelch)
+                                val scanning = scanProgress in 0..100
+                                val line = when {
+                                    scanning -> "🔍 搜台中 $scanProgress% · 频谱在扫，别手动调谐"
+                                    else -> usbWarn ?: signalQualityText(signalDb, squelchOpen, squelch)
+                                }
                                 Text(
                                     line,
                                     fontSize = 10.sp,
                                     color = when {
+                                        scanning -> Color(0xFF00E5FF)
                                         usbWarn != null -> Color(0xFFFF6B6B)
                                         squelchOpen && signalDb >= -45f -> Color(0xFF7DF3FF)
                                         squelchOpen -> Color(0xFF00E5FF)

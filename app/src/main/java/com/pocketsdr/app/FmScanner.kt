@@ -79,6 +79,11 @@ class FmScanner(
                 var prev2 = -120f
                 var prevFreq = from - step
                 var f = from
+                // 进度必须与「找到几个台」解耦。
+                // 以前只在发现局部极大时才上报进度：扫 206 个点若只找到 3 个台，
+                // 进度条会从 0 直接跳到 15%，其余时间纹丝不动——看着像卡死了。
+                // 这里每前进约 2% 就报一次，扫到哪儿一目了然。
+                var lastPct = -1
                 while (f <= to && !cancelled) {
                     engine.tuneWithinSpan(f)
                     Thread.sleep(90)  // 等 DSP 稳定 + 取 2 个能量统计块
@@ -87,6 +92,11 @@ class FmScanner(
                     if (prev2 < prev1 && prev1 > db && prev1 > thr) {
                         results.add(Station(prevFreq, prev1))
                         onProgress((idx * 100 / total).coerceIn(0, 100), results.size)
+                    }
+                    val pct = (idx * 100 / total).coerceIn(0, 100)
+                    if (pct > lastPct && pct - lastPct >= 2) {
+                        lastPct = pct
+                        onProgress(pct, results.size)
                     }
                     prev2 = prev1
                     prev1 = db
@@ -98,6 +108,7 @@ class FmScanner(
                 if (prev1 > prev2 && prev1 > thr) {
                     results.add(Station(prevFreq, prev1))
                 }
+                onProgress(100, results.size)
             } catch (_: InterruptedException) {
             } finally {
                 // 恢复
