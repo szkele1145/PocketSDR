@@ -1,6 +1,8 @@
 package com.pocketsdr.app.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -15,9 +18,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,11 +41,38 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FmScanner
+import com.pocketsdr.app.FreqStore
 import com.pocketsdr.app.SdrEngine
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * 可扫描的波段。
+ *
+ * 以前搜台只扫 FM 广播 87.5–108 MHz，可 SDR 远不止收广播——
+ * 航空对讲、业余无线电、对讲机都是听得见的频段。
+ *
+ * 步进按各波段的实际电台间隔选，同时把总点数控制在 600 以内：
+ * 每个点要等 90ms 让 DSP 稳定，600 点约 54 秒，是可接受的上限。
+ */
+data class ScanBand(
+    val name: String,
+    val fromHz: Long,
+    val toHz: Long,
+    val stepHz: Long,
+    val mode: SdrEngine.Mode,
+    /** 结果行的模式标签（测量模式不一定等于收听模式） */
+    val listenMode: SdrEngine.Mode = mode
+)
+
+val ScanBands = listOf(
+    ScanBand("FM 广播", 87_500_000L, 108_000_000L, 100_000L, SdrEngine.Mode.NFM, SdrEngine.Mode.WFM),
+    ScanBand("航空对讲", 118_000_000L, 137_000_000L, 25_000L, SdrEngine.Mode.AM, SdrEngine.Mode.AM),
+    ScanBand("业余 2m", 144_000_000L, 146_000_000L, 25_000L, SdrEngine.Mode.NFM, SdrEngine.Mode.NFM),
+    ScanBand("对讲 UHF", 400_000_000L, 450_000_000L, 100_000L, SdrEngine.Mode.NFM, SdrEngine.Mode.NFM)
+)
 
 /** 搜台对话框 */
 @Composable
@@ -57,6 +89,14 @@ fun ScanDialog(
     // 扫描器实例保留，用于读回实测噪声底（判断灵敏度/是否搜得到台）
     var scanner by remember { mutableStateOf<com.pocketsdr.app.FmScanner?>(null) }
     var floorDb by remember { mutableStateOf<Float?>(null) }
+    // 当前选中的波段：默认跟当前接收模式对上——
+    // 用户在 AM 模式下点「搜台」，心里想的多半是航空对讲，不是 FM 广播。
+    var bandIdx by remember {
+        val m = engine.mode
+        val idx = ScanBands.indexOfFirst { it.listenMode == m }
+        mutableStateOf(if (idx >= 0) idx else 0)
+    }
+    val band = ScanBands[bandIdx]
     // 已收藏的频率集合：搜出来的台大多只想留一两个，
     // 以前 ★ 只是只读文字，点了没反应，用户只能「全存收藏」把 20 个台全收下。
     val favFreqs = remember { mutableStateListOf<Long>() }
@@ -69,12 +109,31 @@ fun ScanDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (scanProgress in 0..100) "搜索中… $scanProgress% (${scanFound.size} 台)"
-            else "FM 自动搜台") },
+            else "自动搜台") },
         text = {
             Column {
+                // 波段选择：SDR 不止收广播，航空对讲/业余/对讲机都要能扫
+                Text("波段", fontSize = 12.sp, color = Color(0xFF5A6B7F))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ScanBands.forEachIndexed { i, b ->
+                        val on = i == bandIdx
+                        OutlinedButton(
+                            onClick = { bandIdx = i },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (on) Color(0xFF00E5FF) else Color(0xFF1A2230),
+                                contentColor = if (on) Color(0xFF06121A) else Color(0xFF8FA3B8)),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) { Text(b.name, fontSize = 11.sp) }
+                    }
+                }
+                val points = ((band.toHz - band.fromHz) / band.stepHz).toInt() + 1
+                val seconds = points * 90 / 1000
                 Text(
-                    if (scanProgress in 0..100) "扫描 87.5–108 MHz，请稍候"
-                    else "扫描整个 FM 广播波段，找到所有信号峰值。约需 20 秒。",
+                    if (scanProgress in 0..100)
+                        "扫描 ${formatFreq(band.fromHz)}–${formatFreq(band.toHz)}，请稍候"
+                    else "${band.name}：${formatFreq(band.fromHz)}–${formatFreq(band.toHz)}，" +
+                        "约 ${points} 个频点，约需 $seconds 秒。",
                     fontSize = 13.sp
                 )
                 if (scanProgress in 0..100) {
@@ -90,7 +149,7 @@ fun ScanDialog(
                         fontSize = 11.sp, color = Color(0xFF5A6B7F))
                 }
                 if (scanFound.isEmpty()) {
-                    Text("尚未找到电台。点右下角「开始扫描」，约 20 秒。", fontSize = 13.sp,
+                    Text("尚未找到电台。点右下角「开始扫描」，约 $seconds 秒。", fontSize = 13.sp,
                         color = Color(0xFF5A6B7F))
                 } else {
                     // 正在试听哪个台：点频率只调谐不关窗，用户可以连续试听，
@@ -105,6 +164,9 @@ fun ScanDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = {
                                     engine.tuneTo(st.freq)
+                                    // 切到该波段的收听模式：FM 广播测量用 NFM 更准，
+                                    // 但收听必须是 WFM，否则听到的是单声道窄带音频
+                                    engine.selectMode(band.listenMode)
                                     audition = st.freq
                                 }) { Text(formatFreq(st.freq), fontSize = 14.sp) }
                                 Text("${st.levelDb.toInt()}dB", fontSize = 11.sp,
@@ -119,7 +181,8 @@ fun ScanDialog(
                                         } else {
                                             store.addFavorite(
                                                 com.pocketsdr.app.FreqStore.Ch(
-                                                    formatFreq(st.freq), st.freq, 0)
+                                                    formatFreq(st.freq), st.freq,
+                                                    FreqStore.modeIndex(band.listenMode))
                                             )
                                             favFreqs.add(st.freq)
                                         }
@@ -150,7 +213,9 @@ fun ScanDialog(
                             onProgress(101)
                         })
                     scanner = sc
-                    sc.scan(87_500_000, 108_000_000)
+                    // 按选中的波段扫：范围、步进、测量模式都跟着波段走。
+                    // 测量模式必须匹配：航空对讲是 AM，用 NFM 测会一个台都搜不到。
+                    sc.scan(band.fromHz, band.toHz, band.stepHz, null, band.mode)
                 }
             }) { Text(if (scanProgress !in 0..100) "开始扫描" else "扫描中…") }
         },
@@ -164,7 +229,8 @@ fun ScanDialog(
                         TextButton(onClick = {
                             scanFound.forEach { st ->
                                 store.addFavorite(com.pocketsdr.app.FreqStore.Ch(
-                                    formatFreq(st.freq), st.freq, 0))
+                                    formatFreq(st.freq), st.freq,
+                                    FreqStore.modeIndex(band.listenMode)))
                                 if (!favFreqs.contains(st.freq)) favFreqs.add(st.freq)
                             }
                         }) { Text("★ 全存收藏") }

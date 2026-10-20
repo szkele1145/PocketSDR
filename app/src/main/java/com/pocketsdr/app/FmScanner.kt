@@ -34,7 +34,13 @@ class FmScanner(
      * 真机噪声底与增益跟仿真完全不同，固定阈值会一个台都搜不到（或全是台）。
      */
     @JvmOverloads
-    fun scan(from: Long, to: Long, step: Long = 100_000, thresholdDb: Float? = null) {
+    fun scan(
+        from: Long,
+        to: Long,
+        step: Long = 100_000,
+        thresholdDb: Float? = null,
+        measureMode: SdrEngine.Mode = SdrEngine.Mode.NFM
+    ) {
         cancelled = false
         Thread({
             val results = ArrayList<Station>()
@@ -43,7 +49,9 @@ class FmScanner(
             val oldMode = engine.mode
             engine.muted = true  // 扫描静音（防跳频爆音）
             try {
-                engine.selectMode(SdrEngine.Mode.NFM)  // 窄带测信号更准
+                // 测量模式按波段选：FM 广播用窄带更准，航空对讲是 AM，
+                // 对讲机才是 NFM。以前写死 NFM，扫航空频段会一个台都搜不到。
+                engine.selectMode(measureMode)
                 engine.squelchDb = -120f               // 静噪全开防丢样本
 
                 // ---- 噪声底粗测：整个波段均匀取 12 个点取中位数 ----
