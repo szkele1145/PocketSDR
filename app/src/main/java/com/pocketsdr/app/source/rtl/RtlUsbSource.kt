@@ -180,21 +180,49 @@ class RtlUsbSource(
         return produced
     }
 
+    /**
+     * 调谐失败累计次数。
+     *
+     * 以前调谐失败是完全静默的：setParams 的返回值被丢掉，异常也被 catch 吞掉。
+     * 后果是「改了频率但还是原来的台」——用户看到的是频率数字变了、声音没变，
+     * 完全猜不到是硬件没接受这次调谐。改成可见 + 可计数后，
+     * 自检报告里出现「调谐失败 N 次」就能一眼定位。
+     */
+    @Volatile var tuneFailures = 0
+        private set
+
+    /** 硬件设置（增益/增益模式）失败累计次数 */
+    @Volatile var hwSettingFailures = 0
+        private set
+
     private fun retune() {
         if (closed) return
         try {
             if (directSampling != 0) {
                 // 直接采样模式：调谐 = IF 频率
                 rtl.setIfFreq(centerFreq)
-            } else {
-                val t = tuner ?: return
-                rtl.setI2cRepeater(true)
-                // offset tuning：tuner 调到 f − offs（信号在 IF offs 处，基带由 demod 下变频）
-                val tuneTo = if (offsetTuning) centerFreq - offsFreq else centerFreq
-                t.setParams(tuneTo)
-                rtl.setI2cRepeater(false)
+                return
             }
-        } catch (_: Exception) {}
+            val t = tuner ?: return
+            rtl.setI2cRepeater(true)
+            // offset tuning：tuner 调到 f − offs（信号在 IF offs 处，基带由 demod 下变频）
+            val tuneTo = if (offsetTuning) centerFreq - offsFreq else centerFreq
+            // 调谐失败要重试：I2C 偶发抖动（供电/接触）会让一次调谐打空，
+            // 而用户看到的只是「频率数字变了、声音没变」，根本无从判断。
+            var ok = false
+            for (attempt in 0 until 2) {
+                ok = t.setParams(tuneTo)
+                if (ok) break
+                tuneFailures++
+                SdrLog.w("RTL", "调谐 ${tuneTo / 1000} kHz 失败，重试 ${attempt + 1}/2")
+                try { Thread.sleep(20) } catch (_: InterruptedException) {}
+            }
+            rtl.setI2cRepeater(false)
+            if (!ok) SdrLog.e("RTL", "调谐 ${tuneTo / 1000} kHz 最终失败")
+        } catch (e: Exception) {
+            tuneFailures++
+            SdrLog.e("RTL", "调谐异常: ${e.message?.take(40)}")
+        }
     }
 
     /** 设 LNA 增益（tenths dB，FC0013 内部取最近档） */
@@ -202,9 +230,17 @@ class RtlUsbSource(
         if (closed) return
         try {
             rtl.setI2cRepeater(true)
-            tuner?.setLnaGain(tenthsDb)
+            val ok = tuner?.setLnaGain(tenthsDb) ?: false
             rtl.setI2cRepeater(false)
-        } catch (_: Exception) {}
+            if (!ok) {
+                // 以前失败是完全静默的：用户调了增益却不知道有没有生效
+                hwSettingFailures++
+                SdrLog.w("RTL", "LNA 增益设置失败 ($tenthsDb)")
+            }
+        } catch (e: Exception) {
+            hwSettingFailures++
+            SdrLog.e("RTL", "LNA 增益异常: ${e.message?.take(40)}")
+        }
     }
 
     /** 手动增益模式开关（true=手动按 setLnaGain 的值） */
@@ -212,9 +248,16 @@ class RtlUsbSource(
         if (closed) return
         try {
             rtl.setI2cRepeater(true)
-            tuner?.setGainMode(manual)
+            val ok = tuner?.setGainMode(manual) ?: false
             rtl.setI2cRepeater(false)
-        } catch (_: Exception) {}
+            if (!ok) {
+                hwSettingFailures++
+                SdrLog.w("RTL", "增益模式设置失败 ($manual)")
+            }
+        } catch (e: Exception) {
+            hwSettingFailures++
+            SdrLog.e("RTL", "增益模式异常: ${e.message?.take(40)}")
+        }
     }
 
     /** RTL2832 内部 AGC 开关 */

@@ -293,6 +293,9 @@ class SdrEngine private constructor(
         // I2C 重试次数：0 = 链路很稳；偶发几次 = 有轻微抖动但被重试救回；
         // 几十上百次 = 供电不足或 OTG 线接触不良，该换线了
         sb.append("  I2C 重试：").append(rtl?.i2cRetries ?: 0).append(" 次\n")
+        // 调谐失败：>0 说明发生过「频率数字变了、声音没变」的情况
+        sb.append("  调谐失败：").append(rtl?.tuneFailures ?: 0).append(" 次\n")
+        sb.append("  硬件设置失败：").append(rtl?.hwSettingFailures ?: 0).append(" 次\n")
         sb.append("  仿真源：").append(if (!isRealSource) "正常" else "不适用").append('\n')
         return sb.toString()
     }
