@@ -102,9 +102,18 @@ fun ScanDialog(
     val favFreqs = remember { mutableStateListOf<Long>() }
     /** 正在试听的频率（null = 没在试听） */
     var audition by remember { mutableStateOf<Long?>(null) }
+    // 本次扫描是不是被用户中途取消的：取消后要给不同的反馈，
+    // 否则用户会以为扫完了却只得到几个台
+    var scanCancelled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         favFreqs.clear()
         favFreqs.addAll(store.getFavorites().map { it.freq })
+    }
+    // 关掉对话框时必须把扫描停掉。
+    // 以前关窗只是关 UI，扫描线程还在后台逐点调谐：引擎一直是 muted 状态，
+    // 用户听不到原来的台，主界面频率还在自己乱跳——像应用失控了。
+    DisposableEffect(Unit) {
+        onDispose { scanner?.cancel() }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -149,9 +158,16 @@ fun ScanDialog(
                         fontSize = 11.sp, color = Color(0xFF5A6B7F))
                 }
                 if (scanFound.isEmpty()) {
-                    Text("尚未找到电台。点右下角「开始扫描」，约 $seconds 秒。", fontSize = 13.sp,
-                        color = Color(0xFF5A6B7F))
+                    Text(
+                        if (scanCancelled) "已取消扫描，没找到台。点「开始扫描」重来。"
+                        else "尚未找到电台。点右下角「开始扫描」，约 $seconds 秒。",
+                        fontSize = 13.sp, color = Color(0xFF5A6B7F))
                 } else {
+                    if (scanCancelled) {
+                        // 中途取消时已找到的台照样能用，只是要说清楚不是扫完的
+                        Text("已取消扫描（找到 ${scanFound.size} 个台，可直接试听/收藏）",
+                            fontSize = 12.sp, color = Color(0xFFF6D55C))
+                    }
                     // 正在试听哪个台：点频率只调谐不关窗，用户可以连续试听，
                     // 听满意了再点 ★ 收藏——原来一点就关窗口，想收藏还得重新打开对话框。
                     audition?.let { f ->
@@ -213,11 +229,24 @@ fun ScanDialog(
                             onProgress(101)
                         })
                     scanner = sc
+                    scanCancelled = false
                     // 按选中的波段扫：范围、步进、测量模式都跟着波段走。
                     // 测量模式必须匹配：航空对讲是 AM，用 NFM 测会一个台都搜不到。
                     sc.scan(band.fromHz, band.toHz, band.stepHz, null, band.mode)
                 }
-            }) { Text(if (scanProgress !in 0..100) "开始扫描" else "扫描中…") }
+            }) {
+                if (scanProgress in 0..100) {
+                    // 扫描中：按钮变成「取消」。
+                    // 长波段（短波/对讲 UHF）要扫 45~54 秒，不能让人干等没法中止——
+                    // 引擎的 muted 状态会一直挂着，用户连原来的台都听不到。
+                    TextButton(onClick = {
+                        scanCancelled = true
+                        scanner?.cancel()
+                    }) { Text("取消", color = Color(0xFFFF6B6B)) }
+                } else {
+                    Text("开始扫描")
+                }
+            }
         },
         dismissButton = {
             Row {
