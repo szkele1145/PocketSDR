@@ -62,6 +62,26 @@ class FreqStore(private val context: Context) {
         get() = prefs.getInt("waterfallSpeed", 1)
         set(v) { prefs.edit().putInt("waterfallSpeed", v).apply() }
 
+    /**
+     * 静噪门限（dBFS）。
+     *
+     * 以前这个值不存盘：真机每次连接都被强制拉到 -100（全开），用户辛苦调好的
+     * 静噪一重启就没了，底噪全放出来吵得慌。现在记住用户的选择。
+     */
+    var lastSquelch: Float
+        get() = prefs.getFloat("lastSquelch", -40f)
+        set(v) { prefs.edit().putFloat("lastSquelch", v).apply() }
+
+    /**
+     * 用户是否亲手调过静噪。
+     *
+     * 只有「从没调过」的第一次真机连接才自动全开（-100）：那是为了确保用户
+     * 一插上就能听到声音，而不是对着静默界面以为设备坏了。调过之后就以用户为准。
+     */
+    var squelchTuned: Boolean
+        get() = prefs.getBoolean("squelchTuned", false)
+        set(v) { prefs.edit().putBoolean("squelchTuned", v).apply() }
+
     /** 收藏频道列表（JSON 数组：[{"n":"电台名","f":98100000,"m":0}, …]） */
     fun getFavorites(): MutableList<Ch> {
         val arr = prefs.getString("favorites", null) ?: return mutableListOf()

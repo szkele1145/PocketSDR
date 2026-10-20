@@ -230,13 +230,20 @@ class MainActivity : ComponentActivity(), UiBridge {
                 it.start()
                 it.tuneTo(tuneHint)
                 restoreCommon(it, store)
-                // 真机首次连接把静噪放到最低：-40dB 是仿真源的电平尺度，
-                // 真机信号若低于它就会「连上了却一片死寂」，看着像坏了。
-                // 用户听到声音后再自行上调到合适位置。
-                it.squelchDb = -100f
+                // 只有「从没亲手调过静噪」的首次真机连接才自动全开：
+                // -40dB 是仿真源的电平尺度，真机信号若低于它就会「连上了却一片死寂」，
+                // 看着像设备坏了。先让用户听到声音，之后他想怎么调都行。
+                // 调过一次之后就以存盘值为准（restoreCommon 已经恢复了），否则用户
+                // 辛苦调好的门限每次重连都会被重置。
+                // 用 -80 而不是 -100：滑条范围是 -80..-10，设成 -100 会让滑条
+                // 停在最左端却显示 -100，用户一碰又跳回 -80，看着像坏了。
+                if (!store.squelchTuned) it.squelchDb = -80f
                 engineReady = true
             }
-            pushStatus("RTL-SDR 已连接 · FC0013 · 静噪已全开（有声后可上调）")
+            pushStatus(
+                if (!store.squelchTuned) "RTL-SDR 已连接 · FC0013 · 静噪已全开（有声后可上调）"
+                else "RTL-SDR 已连接 · FC0013 · 静噪 ${store.lastSquelch.toInt()}dB"
+            )
             verifyHardwareHealth()
         } catch (e: Exception) {
             // 关键：初始化失败必须归还 USB 连接，否则后续重试全部「设备忙」，只能重启应用
@@ -351,6 +358,9 @@ class MainActivity : ComponentActivity(), UiBridge {
         eng.selectMode(com.pocketsdr.app.FreqStore.modeFromIndex(store.lastMode))
         eng.volume = store.lastVolume
         eng.peakHoldEnabled = store.peakHold
+        // 静噪要跟着恢复：以前不存盘，真机连接时被强制拉到 -100，用户调好的门限
+        // 一重启就没了，底噪全放出来。现在以存盘值为准（见下面首次连接的例外）。
+        eng.squelchDb = store.lastSquelch
     }
 
     /** 白名单判定统一收口到 UsbDiag（与 device_filter.xml 对齐） */

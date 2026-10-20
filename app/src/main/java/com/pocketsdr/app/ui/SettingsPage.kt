@@ -111,7 +111,13 @@ fun SettingsPage(
         GroupCard("静噪（往下拖 = 只收强台）") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Slider(
-                    value = squelch, onValueChange = { squelch = it; engine.squelchDb = it },
+                    value = squelch,
+                    onValueChange = {
+                        squelch = it
+                        engine.squelchDb = it
+                        store.lastSquelch = it
+                        store.squelchTuned = true
+                    },
                     valueRange = -80f..-10f, modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFFFF5252),

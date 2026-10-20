@@ -497,7 +497,14 @@ fun RxPage(
                     Text("静噪", fontSize = 10.sp, color = Color(0xFF5A6B7F))
                     Slider(
                         value = squelch,
-                        onValueChange = { squelch = it; engine.squelchDb = it },
+                        onValueChange = {
+                            squelch = it
+                            engine.squelchDb = it
+                            // 存盘并标记「用户调过」：之后的连接不再自动全开，
+                            // 否则用户辛苦调好的门限每次重连都被重置
+                            store.lastSquelch = it
+                            store.squelchTuned = true
+                        },
                         valueRange = -80f..-10f,
                         modifier = Modifier.width(120.dp).padding(start = 4.dp),
                         colors = SliderDefaults.colors(
