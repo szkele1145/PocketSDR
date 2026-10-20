@@ -55,6 +55,9 @@ fun AppShell(
     onExit: () -> Unit
 ) {
     var page by remember { mutableStateOf(0) }
+    // 点主界面硬件提示横幅 → 切到设置页并直接滚到 USB 诊断卡。
+    // 只切页不够：USB 诊断在设置页左列末尾，列很长，用户还得自己翻半天。
+    var usbDiagFocus by remember { mutableStateOf(false) }
 
     Scaffold(containerColor = Color(0xFF0B0E14)) { pad ->
         androidx.compose.foundation.layout.Row(
@@ -75,9 +78,14 @@ fun AppShell(
                         rdsLocked = rdsLocked,
                         usbPending = usbPending,
                         // 提示条上的「去连接」：直接切到设置页的 USB 诊断
-                        onOpenUsbDiag = { page = 1 }
+                        onOpenUsbDiag = { usbDiagFocus = true; page = 1 }
                     )
-                    1 -> SettingsPage(engine, status, onExit = onExit)
+                    1 -> SettingsPage(
+                        engine = engine,
+                        status = status,
+                        focusUsbDiag = usbDiagFocus,
+                        onExit = onExit
+                    )
                 }
             }
         }

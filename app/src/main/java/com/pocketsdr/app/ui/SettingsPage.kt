@@ -12,6 +12,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,6 +29,8 @@ import com.pocketsdr.app.SdrEngine
 fun SettingsPage(
     engine: SdrEngine,
     status: String,
+    /** 主界面硬件提示横幅被点中：进来就滚到 USB 诊断，别让用户自己找 */
+    focusUsbDiag: Boolean = false,
     onExit: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -49,6 +53,17 @@ fun SettingsPage(
     var favorites by remember { mutableStateOf(store.getFavorites()) }
     var renameTarget by remember { mutableStateOf<FreqStore.Ch?>(null) }
     var renameText by remember { mutableStateOf("") }
+    // USB 诊断卡在左列末尾（列很长，要滚很久才看得到）。
+    // 主界面硬件提示横幅点进来时直接滚过去，别让用户自己找。
+    val leftScroll = rememberScrollState()
+    var usbDiagTop by remember { mutableStateOf(0f) }
+    LaunchedEffect(focusUsbDiag) {
+        if (focusUsbDiag) {
+            // 等一帧让布局先算出来，拿到诊断卡的实际位置
+            kotlinx.coroutines.delay(120)
+            leftScroll.scrollTo(usbDiagTop.coerceAtLeast(0f).toInt())
+        }
+    }
 
     Column(
         Modifier.fillMaxSize()
@@ -67,7 +82,7 @@ fun SettingsPage(
         // 横屏只有 400dp 出头的高度，竖排一长条根本翻不完；
         // 改成左右两列，常用项（模式/波段/静噪）在左，工具与硬件在右。
         Row(Modifier.fillMaxWidth().weight(1f)) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        Column(Modifier.weight(1f).verticalScroll(leftScroll)) {
 
         // ===== 调制模式 =====
         GroupCard("调制模式") {
@@ -291,7 +306,10 @@ fun SettingsPage(
         }
 
         // ===== USB 诊断（无硬件也常驻，非官方棒子排查用）=====
-        GroupCard("USB 诊断") {
+        GroupCard("USB 诊断", modifier = Modifier.onGloballyPositioned {
+            // 记下这张卡在滚动容器里的位置，主界面横幅点进来时直接滚到这儿
+            usbDiagTop = it.positionInParent().y
+        }) {
             UsbDiagCard(engine)
         }
 
@@ -453,11 +471,15 @@ fun UsbDiagCard(engine: SdrEngine? = null) {
 }
 
 /** 分组卡片容器 */@Composable
-private fun GroupCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun GroupCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Surface(
         color = Color(0xFF111826),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+        modifier = modifier.fillMaxWidth().padding(vertical = 5.dp)
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(title, fontSize = 12.sp, color = Color(0xFF5A6B7F),

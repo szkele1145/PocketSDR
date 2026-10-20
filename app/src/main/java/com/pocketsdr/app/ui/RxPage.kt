@@ -184,6 +184,41 @@ fun RxPage(
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF0B0E14))) {
+        // ===== 硬件提示横幅（顶部通栏）=====
+        // 为什么放横幅而不是挤在底部状态行：底部那行 10sp 小字只放得下三四十个字，
+        // 而「⚠ 硬件连接失败：{70 字符英文错误}（点这里到 USB 诊断）」会被截断——
+        // 截掉的正好是唯一能查清原因的那句指引。横幅横贯整个频谱宽度，放得下，
+        // 也更醒目。
+        usbPending?.let { msg ->
+            Surface(
+                color = Color(0xFF2A1114),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenUsbDiag() }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Box(
+                        Modifier
+                            .width(3.dp)
+                            .height(18.dp)
+                            .background(Color(0xFFFF6B6B))
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        msg,
+                        fontSize = 11.sp,
+                        color = Color(0xFFFF9E9E),
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text("›", fontSize = 15.sp, color = Color(0xFFFF6B6B))
+                }
+            }
+        }
+
         // ===== 频率刻度行（与频谱网格同源，跟随 viewSpan 变焦） =====
         FreqRuler(centerFreq = center, span = viewSpan)
 
@@ -297,24 +332,20 @@ fun RxPage(
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F), maxLines = 1,
                                     fontFamily = FontFamily.Monospace
                                 )
-                                // 状态行优先级：未连接（最根本问题）> USB 断流告警 > 信号质量结论。
+                                // 状态行优先级：USB 断流告警 > 信号质量结论。
+                                // 硬件连接类的长提示已挪到顶部横幅（这里一行放不下会被截断），
                                 // 三者共占一行，避免小字堆叠把横屏频谱压扁
-                                val line = usbPending ?: usbWarn
-                                    ?: signalQualityText(signalDb, squelchOpen, squelch)
+                                val line = usbWarn ?: signalQualityText(signalDb, squelchOpen, squelch)
                                 Text(
                                     line,
                                     fontSize = 10.sp,
                                     color = when {
-                                        usbPending != null -> Color(0xFFF6D55C)
                                         usbWarn != null -> Color(0xFFFF6B6B)
                                         squelchOpen && signalDb >= -45f -> Color(0xFF7DF3FF)
                                         squelchOpen -> Color(0xFF00E5FF)
                                         else -> Color(0xFF5A6B7F)
                                     },
-                                    maxLines = 1,
-                                    // 未连接提示可点：直接跳设置页 USB 诊断
-                                    modifier = if (usbPending != null)
-                                        Modifier.clickable { onOpenUsbDiag() } else Modifier
+                                    maxLines = 1
                                 )
                             }
                         }

@@ -35,23 +35,45 @@ $Token = (Get-Content $TokenFile -Raw).Trim()
 $H = "Authorization: token $Token"
 
 function Invoke-Gh {
-    param([string]$Url, [string]$Method = "GET", [string]$BodyFile = "", [string]$OutFile = "")
+    param([string]$Url, [string]$Method = "GET", [string]$BodyFile = "", [string]$OutFile = "", [int]$EmptyRetries = 0)
     $a = @("-s", "-k", "-X", $Method, $Url, "-H", $H, "-H", "Accept: application/vnd.github+json")
     if ($BodyFile) { $a += @("-H", "Content-Type: application/json", "--data-binary", "@$BodyFile") }
     if ($OutFile)  { $a += @("-o", $OutFile) }
     # Pipe through Out-String: curl output can come back as a string ARRAY in PowerShell,
     # and regex-matching an array fails silently (that is exactly how v2.36.0's upload
     # check reported failure for a successful upload).
-    (& curl.exe @a) | Out-String
+    $resp = ""
+    $tries = [Math]::Max(1, $EmptyRetries + 1)
+    for ($i = 1; $i -le $tries; $i++) {
+        $resp = (& curl.exe @a) | Out-String
+        if ($resp.Length -ge 10) { break }
+        if ($i -lt $tries) {
+            Write-Host "    empty GitHub response (try $i), retrying"
+            Start-Sleep -Seconds 3
+        }
+    }
+    return $resp
 }
 
 function Get-Json {
     param([string]$Url)
     $out = Join-Path $Tmp "gh_out.json"
-    & curl.exe -s -k --retry 3 --retry-delay 3 -H $H -H "Accept: application/vnd.github+json" $Url -o $out
-    if (-not (Test-Path $out)) { throw "GitHub request returned nothing: $Url" }
-    $raw = [IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)
-    if ($raw.Length -lt 10) { throw "GitHub returned an empty body: $Url" }
+    # curl --retry only retries transport errors, not a 200 with an empty body.
+    # GitHub occasionally answers 200 with an empty payload while its edge is
+    # unhappy - that aborted the v2.48.0 publish. Retry the whole request.
+    $raw = ""
+    for ($try = 1; $try -le 4; $try++) {
+        if (Test-Path $out) { Remove-Item $out -Force }
+        & curl.exe -s -k --retry 2 --retry-delay 2 --max-time 60 `
+            -H $H -H "Accept: application/vnd.github+json" $Url -o $out
+        if (Test-Path $out) {
+            $raw = [IO.File]::ReadAllText($out, [Text.Encoding]::UTF8)
+        }
+        if ($raw.Length -ge 10) { break }
+        Write-Host "    empty GitHub response (try $try), retrying"
+        Start-Sleep -Seconds 3
+    }
+    if ($raw.Length -lt 10) { throw "GitHub request returned nothing usable: $Url" }
     return ($raw | ConvertFrom-Json)
 }
 
@@ -91,7 +113,7 @@ foreach ($f in $Files) {
     if (-not (Test-Path $full)) { throw "File not found: $f" }
     $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($full))
     [IO.File]::WriteAllText("$Tmp\blob.json", ('{"content":"' + $b64 + '","encoding":"base64"}'), $Utf8NoBom)
-    $resp = Invoke-Gh "$ApiBase/git/blobs" -Method POST -BodyFile "$Tmp\blob.json"
+    $resp = Invoke-Gh "$ApiBase/git/blobs" -Method POST -BodyFile "$Tmp\blob.json" -EmptyRetries 3
     $sha = [regex]::Match($resp, '"sha":\s*"([0-9a-f]{40})"').Groups[1].Value
     if (-not $sha) { throw "Blob upload failed for $f`n$resp" }
     $blobMap[$f] = $sha
