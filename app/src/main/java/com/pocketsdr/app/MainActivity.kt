@@ -237,6 +237,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 engineReady = true
             }
             pushStatus("RTL-SDR 已连接 · FC0013 · 静噪已全开（有声后可上调）")
+            verifyHardwareHealth()
         } catch (e: Exception) {
             // 关键：初始化失败必须归还 USB 连接，否则后续重试全部「设备忙」，只能重启应用
             pushStatus("硬件初始化失败: ${e.message?.take(60)}")
@@ -251,6 +252,45 @@ class MainActivity : ComponentActivity(), UiBridge {
         }
         hwErrorText = null
         refreshUsbPending()
+    }
+
+    /**
+     * 真机连上后等一下再下结论：此刻 FFT 还在攒第一批数据，
+     * 立刻读噪声底多半是初值 -85dB，没有意义。
+     *
+     * 判断依据是噪声底落在什么区间——这是「设备真的在出数据」最直接的证据：
+     *   - 太低（< -110dB）：ADC 几乎全零，多半是数据没流起来或增益设成了 0
+     *   - 太高（> -40dB）：输入端过载，LNA 拉太高了，真信号会被压掉
+     * 落在中间就说明链路正常，用户可以直接去搜台。
+     */
+    private fun verifyHardwareHealth() {
+        uiHandler.postDelayed({
+            val eng = engine ?: return@postDelayed
+            if (!eng.isRealSource) return@postDelayed
+            val floor = eng.noiseFloorDb
+            val peak = eng.spectrumPeakDb
+            val blocks = eng.blockCount
+            if (blocks <= 0) {
+                // 连上了但一个数据块都没收到：这是比"信号弱"严重得多的问题
+                hwErrorText = "⚠ 已连接但收不到数据（点这里到 USB 诊断）"
+                refreshUsbPending()
+                return@postDelayed
+            }
+            hwErrorText = when {
+                floor < -110f ->
+                    "⚠ 数据近全零（噪声底${floor.toInt()}dB）：查增益是否过低（点这里到 USB 诊断）"
+                floor > -40f ->
+                    "⚠ 输入端过载（噪声底${floor.toInt()}dB）：把 LNA 调低（点这里到 USB 诊断）"
+                else -> null
+            }
+            if (hwErrorText == null) {
+                pushStatus(
+                    "RTL-SDR 工作正常 · 噪声底${floor.toInt()}dB 峰值${peak.toInt()}dB " +
+                        "· 可点「搜台」找台"
+                )
+            }
+            refreshUsbPending()
+        }, 2_500)
     }
 
     private fun switchToSimulated() {
