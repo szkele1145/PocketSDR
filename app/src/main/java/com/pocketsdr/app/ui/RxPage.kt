@@ -82,6 +82,11 @@ fun RxPage(
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
+    // 搜台：核心操作，不该只藏在设置页里（主界面状态提示会引导用户去搜台，
+    // 那个按钮必须在主界面才点得到）
+    var showScan by remember { mutableStateOf(false) }
+    var scanProgress by remember { mutableStateOf(-1) }
+    var scanFound by remember { mutableStateOf(listOf<com.pocketsdr.app.FmScanner.Station>()) }
     // 收藏列表快照：弹窗里增删后必须回写这里，否则底部 ★ 角标和列表都不刷新
     var favorites by remember { mutableStateOf(store.getFavorites()) }
     // 拖动期间的"本地权威中心"：老代码把增量加到 250ms 轮询来的 center 上，
@@ -365,6 +370,27 @@ fun RxPage(
                             )
                         }
                     }
+                    // 搜台：SDR 的核心动作，主界面一触即达。
+                    // 以前只在设置页有，主界面状态提示又会引导用户去搜台，
+                    // 那条提示等于把人指到别的页面去——这里补上入口。
+                    Surface(
+                        color = Color(0xFF1A2230),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .widthIn(min = 56.dp)
+                            .clickable { showScan = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                "🔍 搜台",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00E5FF),
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+                        }
+                    }
                     // 录音文件：主页一触即达，播放/分享/删不翻页
                     Surface(
                         color = Color(0xFF1A2230),
@@ -556,6 +582,16 @@ fun RxPage(
             }
             if (showRecordings) {
                 RecordingsDialog(onDismiss = { showRecordings = false })
+            }
+            if (showScan) {
+                ScanDialog(
+                    engine = engine,
+                    scanFound = scanFound,
+                    scanProgress = scanProgress,
+                    onFound = { scanFound = it },
+                    onProgress = { scanProgress = it },
+                    onDismiss = { showScan = false }
+                )
             }
         }
     }

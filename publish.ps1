@@ -205,13 +205,48 @@ try {
         Write-Host "    $($dirty.Count) uncommitted change(s), stashing"
         git stash push -u -m "publish.ps1 auto-stash" 2>&1 | Out-String
     }
+    $fetched = $false
     for ($i = 1; $i -le 3; $i++) {
         # -q suppresses progress: PS 5.1 turns stderr into an exception under Stop.
         git fetch -q origin main 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0) { break }
+        if ($LASTEXITCODE -eq 0) { $fetched = $true; break }
         Start-Sleep -Seconds 5
     }
-    git reset --hard origin/main 2>&1 | Out-String
+    if ($fetched) {
+        git reset --hard origin/main 2>&1 | Out-String
+    } else {
+        # git transport is down (connection reset). Resetting to the stale
+        # origin/main would move the worktree BACKWARD, undoing what we just
+        # published - that is exactly what happened after v2.45.0.
+        # Rebuild the published commit locally instead, using the GitHub API:
+        # the worktree content is already identical to the remote tree, so
+        # write-tree must reproduce the remote tree sha. If it does not, the
+        # local content drifted and we must NOT reset (it would lose work).
+        Write-Host "    git fetch failed; rebuilding commit locally via GitHub API"
+        $rc = Get-Json "$ApiBase/git/commits/$commitSha"
+        $remoteTree = $rc.tree.sha
+        $remoteParent = @($rc.parents)[0].sha
+        # The index still holds the pre-publish state; refresh it from the
+        # worktree so write-tree sees this release's changes (the worktree is
+        # clean here: anything else was stashed above).
+        git add -A 2>&1 | Out-String
+        $localTree = (git write-tree 2>&1 | Out-String).Trim()
+        if ($localTree -ne $remoteTree) {
+            throw "Local tree $localTree != remote tree $remoteTree - refusing to reset, local work would be lost"
+        }
+        Write-Host "    tree matches remote ($remoteTree)"
+        $env:GIT_AUTHOR_NAME = $rc.author.name
+        $env:GIT_AUTHOR_EMAIL = $rc.author.email
+        $env:GIT_AUTHOR_DATE = $rc.author.date
+        $env:GIT_COMMITTER_NAME = $rc.committer.name
+        $env:GIT_COMMITTER_EMAIL = $rc.committer.email
+        $env:GIT_COMMITTER_DATE = $rc.committer.date
+        # Use the remote message so the rebuilt commit is byte-identical to the
+        # published one (same tree + parent + author + committer + message).
+        $localCommit = (git commit-tree $remoteTree -p $remoteParent -m $rc.message 2>&1 | Out-String).Trim()
+        Write-Host "    local commit $localCommit (remote $commitSha)"
+        git reset --hard $localCommit 2>&1 | Out-String
+    }
     if ($dirty.Count -gt 0) {
         git stash pop 2>&1 | Out-String
         Write-Host "    stashed changes restored"
