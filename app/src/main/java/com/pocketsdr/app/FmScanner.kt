@@ -22,7 +22,26 @@ class FmScanner(
     private val onProgress: (percent: Int, found: Int) -> Unit,
     private val onDone: (stations: List<Station>) -> Unit
 ) {
-    data class Station(val freq: Long, val levelDb: Float)
+    /**
+     * 搜到的一个台。
+     *
+     * @param freq 频率（Hz）。经过 [refine] 精化后是台的真实载频，
+     *   而不是粗扫的网格点。
+     * @param levelDb 信号强度（dBFS）
+     * @param refined 是否经过频率精化。UI 用它标注「这个频率是细扫出来的」，
+     *   免得用户以为还是原来的网格值。
+     */
+    data class Station(val freq: Long, val levelDb: Float, val refined: Boolean = false)
+
+    companion object {
+        /**
+         * 精化时每点的等待时间。
+         *
+         * 比粗扫的 90ms 略长：精化要比较相邻点的细微差别，
+         * DSP 统计没稳就采，读到的差异可能是噪声波动而不是频率偏差。
+         */
+        private const val REFINE_SETTLE_MS = 90L
+    }
 
     /** 本次扫描实际使用的阈值与噪声底（UI 可显示，便于真机判断灵敏度） */
     @Volatile var usedThresholdDb: Float = -55f
@@ -50,6 +69,78 @@ class FmScanner(
     @Volatile private var cancelled = false
 
     fun cancel() { cancelled = true }
+
+    /**
+     * 频率精化：在网格点附近细扫，找到能量最高点作为台的真实频率。
+     *
+     * ## 为什么需要
+     *
+     * 粗扫的步进是 100 kHz（FM 广播），电台的真实载频并不落在网格点上——
+     * 98.1 MHz 这个台可能实际在 98.043 MHz。直接用网格频率收听，
+     * 就有几十 kHz 的偏差：
+     *
+     * - WFM 带宽 200 kHz，还能听到，但 RDS 台名可能解不出来
+     * - 航空 AM 带宽只有 25 kHz，偏 50 kHz 就**完全收不到**
+     *
+     * ## 做法
+     *
+     * 以网格点为中心，在 ±step/2 区间内按 step/20 的细粒度扫一遍，
+     * 取能量最大的那一点。FM 广播下精度从 ±50 kHz 提升到 ±2.5 kHz。
+     *
+     * 代价是每个台多花 21 × 90ms ≈ 1.9 秒。搜到 20 个台就是 38 秒——
+     * 换来的是结果能直接用来收听的频率，值得。
+     *
+     * 调谐失败或被取消时返回原网格点，不让精化失败毁掉已经找到的台。
+     */
+    private fun refine(gridFreq: Long, gridLevel: Float, step: Long): Station {
+        if (cancelled) return Station(gridFreq, gridLevel)
+        // 步进太小就没必要精化（已经足够准）
+        if (step <= 20_000L) return Station(gridFreq, gridLevel)
+        val fineStep = step / 20
+        if (fineStep <= 0L) return Station(gridFreq, gridLevel)
+        val lo = gridFreq - step / 2
+        val hi = gridFreq + step / 2
+        var bestF = gridFreq
+        var bestDb = gridLevel
+        var f = lo
+        while (f <= hi) {
+            if (cancelled) break
+            engine.tuneWithinSpan(f)
+            try {
+                Thread.sleep(REFINE_SETTLE_MS)
+            } catch (_: InterruptedException) {
+                cancelled = true
+                break
+            }
+            if (!engine.lastTuneOk) {
+                // 精化过程中的调谐失败：跳过这个点，不让它影响最佳值
+                tuneFailures++
+                f += fineStep
+                continue
+            }
+            val db = engine.signalDb
+            if (db > bestDb) {
+                bestDb = db
+                bestF = f
+            }
+            f += fineStep
+        }
+        if (bestF != gridFreq) {
+            SdrLog.i("SCAN", "频率精化 ${gridFreq / 1000}kHz → ${bestF / 1000}kHz")
+        }
+        // 必须回到网格点：精化把引擎停在了 bestF，而粗扫的游标还在等下一个网格点。
+        // 不回去的话，下一次测量读到的是 bestF 的能量，会把它当成下一个网格点的值——
+        // 这正是「搜出来的台频点错位」的老毛病。
+        if (!cancelled) {
+            engine.tuneWithinSpan(gridFreq)
+            try {
+                Thread.sleep(REFINE_SETTLE_MS)
+            } catch (_: InterruptedException) {
+                cancelled = true
+            }
+        }
+        return Station(bestF, bestDb, refined = true)
+    }
 
     /**
      * 扫 [from]..[to]（Hz），步进 [step]。
@@ -146,7 +237,8 @@ class FmScanner(
                     val db = engine.signalDb
                     // 局部极大：中间点比两侧都高 + 超阈值
                     if (prev2 < prev1 && prev1 > db && prev1 > thr) {
-                        results.add(Station(prevFreq, prev1))
+                        val st = refine(prevFreq, prev1, step)
+                        results.add(st)
                         onProgress((idx * 100 / total).coerceIn(0, 100), results.size)
                     }
                     val pct = (idx * 100 / total).coerceIn(0, 100)
@@ -162,7 +254,7 @@ class FmScanner(
                 }
                 // 边界：最后一点
                 if (prev1 > prev2 && prev1 > thr) {
-                    results.add(Station(prevFreq, prev1))
+                    results.add(refine(prevFreq, prev1, step))
                 }
                 if (cancelled) wasCancelled = true
                 else onProgress(100, results.size)

@@ -240,7 +240,12 @@ fun ScanDialog(
                                     // 但收听必须是 WFM，否则听到的是单声道窄带音频
                                     engine.selectMode(band.listenMode)
                                     audition = st.freq
-                                }) { Text(formatFreq(st.freq), fontSize = 14.sp) }
+                                }) {
+                                    // 「±」标记：这个频率是细扫出来的真实载频，
+                                    // 不是粗扫的网格点——用户按它调谐能对得更准。
+                                    Text(formatFreq(st.freq) + if (st.refined) " ±" else "",
+                                        fontSize = 14.sp)
+                                }
                                 Text("${st.levelDb.toInt()}dB", fontSize = 11.sp,
                                     color = Color(0xFF5A6B7F), modifier = Modifier.weight(1f))
                                 // ★ 可点：单独收藏/取消收藏这一个台
