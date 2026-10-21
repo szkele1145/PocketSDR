@@ -575,32 +575,43 @@ class SdrEngine private constructor(
      * 用户只看到「有信号却没声音」且没有任何提示。
      * 现在第一次失败就记下来并说明。
      */
+    /**
+     * 写音频：扬声器 + 录音。
+     *
+     * 三件事在这里分道扬镳：
+     *
+     * | 状态 | 扬声器 | 录音 |
+     * |---|---|---|
+     * | 静噪关闭 | 不出声 | **照录**（录下静音段） |
+     * | 用户静音 | 不出声 | **照录** |
+     * | 焦点让出（来电） | 不出声 | **照录** |
+     *
+     * 录音不受静噪限制是守听场景的常规做法：
+     * 不能因为某一段没信号就把那段从文件里剪掉——
+     * 事后回放才知道那个台几点上线、什么时候停播。
+     * 以前录音写在「有信号且未静音」的同一个分支里，
+     * 静噪一关，录出来的文件就缺了一大段。
+     */
     private fun emitAudio(track: android.media.AudioTrack, frames: Int) {
         if (frames <= 0) return
-        // 录音不受静音影响。
-        //
-        // 用户按静音通常是因为不想外放（地铁、办公室、深夜），
-        // 不是不想录——SDR 用户经常一边静音听一边把信号录下来。
-        // 以前录音写在扬声器写入的同一个分支里，一静音录音就停了，
-        // 用户录到的是一段空文件，而且界面上没有任何提示。
+        // 录音：不受静噪/静音影响
         recorder?.write(audioFrames, frames * 2)
-        if (outputMuted) {
-            // 静音时照样喂 AudioTrack（全零），只是不发出声音。
+
+        if (outputMuted || !squelchOpen) {
+            // 静音/静噪关闭：扬声器不出声，但照样喂 AudioTrack（全零）。
             //
             // 为什么不直接不写：AudioTrack 的缓冲区会欠载，
             // 恢复声音的瞬间会先放出一段已经过期的旧音频——「咔」的一声爆音。
             // 持续喂零能让播放流保持连续，恢复时干净。
-            val n = track.write(muteBuf, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
-            if (n < 0) {
-                audioWriteFailures++
-                if (audioWriteFailures == 1) {
-                    SdrLog.e("DSP", "音频写入失败（$n）——AudioTrack 可能已失效")
-                    ui.pushStatus("⚠ 音频输出已失效（写入失败 $audioWriteFailures 次），请重新打开应用")
-                }
-            }
+            writeTrack(track, muteBuf, frames)
             return
         }
-        val n = track.write(audioFrames, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
+        writeTrack(track, audioFrames, frames)
+    }
+
+    /** 往 AudioTrack 写一帧缓冲，失败时记账（AudioTrack 被 stop/release 后写入返回负数） */
+    private fun writeTrack(track: android.media.AudioTrack, buf: ShortArray, frames: Int) {
+        val n = track.write(buf, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
         if (n < 0) {
             audioWriteFailures++
             if (audioWriteFailures == 1) {
@@ -761,7 +772,7 @@ class SdrEngine private constructor(
             }
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0) {
             emitAudio(track, frames)
         }
     }
@@ -798,7 +809,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0) {
             emitAudio(track, frames)
         }
     }
@@ -834,7 +845,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen) {
+        if (frames > 0) {
             emitAudio(track, frames)
         }
     }

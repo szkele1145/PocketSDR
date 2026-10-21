@@ -608,6 +608,12 @@ fun RxPage(
                     recError?.let { e ->
                         Text("⚠ $e", fontSize = 10.sp, color = Color(0xFFFF6B6B))
                     }
+                    // 录音不受静音/静噪影响的直接确认：
+                    // 用户静音后最常见的问题就是「它还在录吗？」——
+                    // 与其让他猜，不如把答案写在界面上。
+                    if (recording && !recordingPaused && (muted || focusMuted || !squelchOpen)) {
+                        Text("扬声器静音，录音继续", fontSize = 10.sp, color = Color(0xFF5A6B7F))
+                    }
                 }
 
                 // 第二行：模式直选（横向排开，一点即换）+ 静噪

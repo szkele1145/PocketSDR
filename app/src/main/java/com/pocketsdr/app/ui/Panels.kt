@@ -461,7 +461,14 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
             if (files.isEmpty()) {
                 Text("暂无录音。设置页点「⏺ 录音」开始。", fontSize = 13.sp)
             } else {
-                LazyColumn(Modifier.height(340.dp)) {
+                // 说明录音的收录规则：用户静音或静噪关闭时，录音照样继续，
+                // 所以文件里会有「没信号的时段」。不解释的话，
+                // 回放时看到一段静音会以为录坏了。
+                Text("录音始终收录：静音/静噪关闭时扬声器不出声，但文件照录（空段是正常的）",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
+                androidx.compose.foundation.layout.Spacer(
+                    androidx.compose.ui.Modifier.height(4.dp))
+                LazyColumn(Modifier.height(320.dp)) {
                     items(files, key = { it.absolutePath }) { f ->
                         val isPlaying = playingPath == f.absolutePath
                         Row(
