@@ -34,6 +34,11 @@ class MainActivity : ComponentActivity(), UiBridge {
     private val uiHandler = Handler(Looper.getMainLooper())
     private lateinit var usbManager: UsbManager
     private lateinit var wakeLock: android.os.PowerManager.WakeLock
+    /** 音频焦点：来电/导航播报时让出声音，结束后自动恢复 */
+    private var audioManager: android.media.AudioManager? = null
+    private var audioFocusRequest: Any? = null
+    /** 失去焦点前的静音状态（null = 当前没因焦点丢失而静音） */
+    private var mutedBeforeFocusLoss: Boolean? = null
 
     // Compose 状态
     private var spectrum by mutableStateOf(FloatArray(0))
@@ -91,6 +96,12 @@ class MainActivity : ComponentActivity(), UiBridge {
     // ---------- 生命周期 ----------
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 屏幕常亮：这是个「一边看频谱一边调旋钮」的工具，
+        // 屏幕一黑用户就只能重新点亮再找回操作位置——以前只有 PARTIAL_WAKE_LOCK
+        // 保证 CPU 不睡，屏幕照样会灭。会自己选 SDR 的人盯着频谱看的时候居多，
+        // 所以默认常亮；省电场景用户可以自己按电源键熄屏（onStop 会放开）。
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        installCrashLogger()
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         // 收音机场景保持 CPU 运转（屏幕可熄灭省电）
         wakeLock = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
@@ -112,7 +123,120 @@ class MainActivity : ComponentActivity(), UiBridge {
         }
 
         startEngine()
+        requestAudioFocus()
         setContent { Host() }
+    }
+
+    /**
+     * 全局崩溃记录。
+     *
+     * 安卓默认的崩溃表现是「应用已停止运行」——一个对话框，没有任何信息。
+     * 用户能反馈的只有这一句，开发者也拿不到堆栈（除非用户恰好会看 logcat、
+     * 恰好连着电脑、恰好会 adb）。
+     *
+     * 这里把堆栈写进 SdrLog 并落盘，用户下次打开应用就能在「自检报告 / 日志」
+     * 里看到完整内容并分享出来。这是把「不可复现的闪退」变成「可定位的问题」
+     * 最省成本的一步。
+     */
+    private fun installCrashLogger() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, err ->
+            try {
+                val sw = java.io.StringWriter()
+                err.printStackTrace(java.io.PrintWriter(sw))
+                val full = sw.toString()
+                SdrLog.e("CRASH", "线程 ${thread.name} 崩溃：\n$full")
+                // 立刻落盘：崩溃后进程即将结束，环形日志里的内容会一起消失
+                SdrLog.save(this)
+            } catch (_: Throwable) {
+            }
+            // 交回系统默认处理（弹「应用已停止运行」、写系统的 dropbox），
+            // 我们不能吞掉异常，否则进程会留在半死状态
+            prev?.uncaughtException(thread, err)
+        }
+    }
+
+    /**
+     * 归还音频焦点。
+     *
+     * 不归还的话：用户退出 App 后，系统仍认为「PocketSDR 在放音频」，
+     * 别的音乐 App 起来时会被错误地压低音量。
+     */
+    private fun abandonAudioFocus() {
+        try {
+            val am = audioManager ?: return
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                (audioFocusRequest as? android.media.AudioFocusRequest)?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        } catch (_: Exception) {
+        } finally {
+            audioFocusRequest = null
+        }
+    }
+
+    /**
+     * 申请音频焦点。
+     *
+     * 以前完全不申请：来电、导航播报、微信语音都会和电台声音**混在一起**响。
+     * 用户听到的是两路声音叠加，既听不清来电也听不清电台。
+     *
+     * 策略是临时让出（AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK 的接收方）：
+     * 别人来抢就静音，抢完自动恢复——电台是背景音，不该和通话争。
+     */
+    private fun requestAudioFocus() {
+        try {
+            audioManager = (getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager)
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                val req = android.media.AudioFocusRequest.Builder(
+                    android.media.AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build())
+                    // 允许系统在来电时压低而不是直接切断，通话结束后自动回来
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener { change -> onFocusChange(change) }
+                    .build()
+                audioFocusRequest = req
+                audioManager?.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(
+                    { change -> onFocusChange(change) },
+                    android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.AUDIOFOCUS_GAIN)
+            }
+        } catch (e: Exception) {
+            // 拿不到焦点也要能听：只是失去"优雅让出"的能力，不该因此不启动
+            SdrLog.w("APP", "申请音频焦点失败：${e.message}")
+        }
+    }
+
+    /** 音频焦点变化：丢了就静音，拿回来就恢复（不改用户自己设的静音状态） */
+    private fun onFocusChange(change: Int) {
+        val eng = engine ?: return
+        when (change) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // 记下用户原本是不是静音：如果他自己就是静音的，恢复时不该给他打开
+                if (mutedBeforeFocusLoss == null) mutedBeforeFocusLoss = eng.muted
+                eng.muted = true
+                SdrLog.i("APP", "音频焦点丢失，暂时静音")
+            }
+            android.media.AudioManager.AUDIOFOCUS_GAIN -> {
+                mutedBeforeFocusLoss?.let { was ->
+                    eng.muted = was
+                    SdrLog.i("APP", "音频焦点恢复，静音状态还原为 $was")
+                }
+                mutedBeforeFocusLoss = null
+            }
+            // LOSS_TRANSIENT_CAN_DUCK：别人只是要"压低"，我们没做压低，
+            // 保持原音量即可（导航播报这种场景压太低反而听不见电台）
+        }
     }
 
     override fun onStop() {
@@ -131,6 +255,7 @@ class MainActivity : ComponentActivity(), UiBridge {
 
     override fun onDestroy() {
         super.onDestroy()
+        abandonAudioFocus()
         stopRxService()
         if (wakeLock.isHeld) wakeLock.release()
         unregisterReceiver(usbReceiver)
