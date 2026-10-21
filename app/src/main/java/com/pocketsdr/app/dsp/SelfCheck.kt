@@ -1,5 +1,6 @@
 package com.pocketsdr.app.dsp
 
+import com.pocketsdr.app.source.RdsEncoder
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -57,8 +58,8 @@ object SelfCheck {
      * @param onProgress 每完成一项回调一次（项序号从 0 开始），供 UI 显示进度
      */
     fun runAll(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Report {
-        val items = ArrayList<Item>(6)
-        val total = 6
+        val items = ArrayList<Item>(7)
+        val total = 7
 
         items.add(checkFftBin()); onProgress(1, total)
         items.add(checkDecimator()); onProgress(2, total)
@@ -66,6 +67,7 @@ object SelfCheck {
         items.add(checkSsb()); onProgress(4, total)
         items.add(checkStereo()); onProgress(5, total)
         items.add(checkAudioPath()); onProgress(6, total)
+        items.add(checkRds()); onProgress(7, total)
 
         return Report(items)
     }
@@ -266,6 +268,42 @@ object SelfCheck {
         } else {
             Item("音频通路增益控制", false, "输出峰值 ${"%.3f".format(peak)}",
                 "增益控制没有把电平稳住，弱台听不见或强台爆音")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 7) RDS 台名：整条链路（编码 → 57k MPX → 解码 → CRC → PS 字符）
+    //
+    // RDS 是 FM 广播显示电台名的功能。解码器里有 Costas 环、位同步、
+    // 差分双相判决、26 位块 CRC，任何一环错了都表现为「锁不上台名」。
+    // 这里用工程里现成的 RdsEncoder 造一段标准 RDS 波形，混进模拟 MPX
+    // （导频 + 立体声副载波 + 音频），再送进 RdsDecoder，看台名能不能出来。
+    // ------------------------------------------------------------------
+    private fun checkRds(): Item {
+        val fs = 256_000f
+        val expected = "POCKETSD"     // RDS 的 PS 字段规定 8 个字符
+        val n = (fs * 2.0f).toInt()
+        val rds = RdsEncoder(expected).buildWave(fs)
+        val mpx = FloatArray(n)
+        var rdsPos = 0
+        for (i in 0 until n) {
+            val t = i / fs.toDouble()
+            // 19k 导频 0.1 + 38k 副载波 0.02 + 1kHz 音频 0.5 + RDS
+            var v = 0.1 * cos(2 * PI * 19000 * t) +
+                    0.02 * cos(2 * PI * 38000 * t) +
+                    0.5 * sin(2 * PI * 1000 * t) +
+                    rds[rdsPos].toDouble()
+            rdsPos = (rdsPos + 1) % rds.size
+            mpx[i] = v.toFloat()
+        }
+        val dec = RdsDecoder(fs)
+        for (i in 0 until n) dec.process(mpx[i])
+        val got = dec.stationName.trim()
+        return if (got == expected && dec.dataLock) {
+            Item("RDS 台名解码", true, "解出「$got」")
+        } else {
+            Item("RDS 台名解码", false, if (got.isEmpty()) "台名没解出来" else "解出「$got」",
+                "RDS 的 Costas 环 / 位同步 / 差分判决 / CRC 有一环不对，台名锁不上")
         }
     }
 

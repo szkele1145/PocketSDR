@@ -166,10 +166,11 @@ class SimulatedSource(
             st.audioPhase = idx * 1.7
             st.modPhase = idx * 0.9
         }
-        // 96.6 台预生成 RDS 波形（"SIM RADIO"）
+        // 96.6 台预生成 RDS 波形（RDS 的 PS 字段规定只有 8 个字符，
+        // 之前的 "SIM RADIO" 是 9 个字符，会被截成 "SIM RADI"）
         if (rdsWave == null) {
             rdsWave = try {
-                RdsEncoder("SIM RADIO").buildWave(sampleRate)
+                RdsEncoder("POCKETSD").buildWave(sampleRate)
             } catch (_: Exception) { null }
         }
     }

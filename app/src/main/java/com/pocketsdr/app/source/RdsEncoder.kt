@@ -77,19 +77,47 @@ class RdsEncoder(private val stationName: String) {
     }
 
     // ---------- 双相编码 ----------
-    /** 位流 → 差分双相波形。1187.5bps → 每位 2 个半位电平翻转 */
-    private fun biphase(bits: BooleanArray, samplesPerBit: Int): FloatArray {
-        val half = samplesPerBit / 2
-        val wave = FloatArray(bits.size * samplesPerBit)
+    /**
+     * 位流 → 差分双相波形。1187.5bps → 每位两半，相邻跳变编码。
+     *
+     * **位长必须用分数累加，不能整数截断。**
+     * 早期版本用 `samplesPerBit = (sampleRate / 1187.5f).toInt()` = 215，
+     * 于是 256 kHz 下实际码率变成 256000/215 = 1190.7 bps，比标准 1187.5 bps
+     * 偏了 0.28%。解码器的位时钟 NCO 跑的是标准 1187.5 Hz（每 bit
+     * 215.4667 个采样），两者每 bit 差 0.4667 个采样 —— 判决点相对信号
+     * 每 460 bit 漂移整整 1 bit，CRC 从此永远过不了，台名永远锁不上。
+     *
+     * 现在每个 bit 精确占 `sampleRate / 1187.5` 个采样（分数位累加），
+     * bit 边界精确落在 k × (fs/1187.5)，与解码器严格对齐。
+     */
+    private fun biphase(bits: BooleanArray, sampleRate: Float): FloatArray {
+        val inc = sampleRate / 1187.5f              // 每 bit 采样数（分数，256k 时 215.4667）
+        val total = kotlin.math.ceil(bits.size.toDouble() * inc.toDouble()).toInt()
+        val wave = FloatArray(total)
         var level = 1f
         var p = 0
+        // 用**小数累加器**分配每 bit 的采样数：216,215,216,215,... 平均正好
+        // 215.4667。这样 bit 边界严格落在 k × (fs/1187.5)。
+        //
+        // 踩过的坑：
+        //  a) 每 bit 固定取整 215 → 码率 1190.7 bps，偏 +0.28%；
+        //  b) 每 bit 固定取整 216 → 码率 1185.2 bps，偏 -0.19%；
+        //  c) 用浮点相位 while(s < bitEnd) 逐点步进 → 起点是分数，
+        //     每 bit 仍覆盖 216 个整数点，等同 (b)。
+        // 三种都让判决点相对信号逐 bit 漂移，CRC 永远过不了。
+        var frac = 0f
         for (b in bits) {
             // 差分双相：每位中间必跳变；"0" 位开头也跳，"1" 位开头不跳
             val half0 = if (b) level else -level
             val half1 = -half0
             level = half1  // 位尾电平成为下一位起始
-            for (s in 0 until half) wave[p++] = half0
-            for (s in 0 until samplesPerBit - half) wave[p++] = half1
+            frac += inc
+            val nSamples = frac.toInt()
+            frac -= nSamples.toFloat()
+            val nFirst = nSamples / 2
+            val nSecond = nSamples - nFirst
+            for (s in 0 until nFirst) wave[p++] = half0
+            for (s in 0 until nSecond) wave[p++] = half1
         }
         return wave
     }
@@ -97,14 +125,13 @@ class RdsEncoder(private val stationName: String) {
     // ---------- 57kHz DSB 调制 ----------
     /** 预生成一个完整 PS 名循环（4 段 × 104 位）的 57k DSB 波形样本 */
     fun buildWave(sampleRate: Float): FloatArray {
-        val samplesPerBit = (sampleRate / 1187.5f).toInt().coerceAtLeast(8)
         val name = stationName.padEnd(8, ' ').take(8)
         val bits = BooleanArray(416)
         for (seg in 0 until 4) {
             val frame = buildFrame(seg, name.toCharArray())
             System.arraycopy(frame, 0, bits, seg * 104, 104)
         }
-        val base = biphase(bits, samplesPerBit)
+        val base = biphase(bits, sampleRate)
         // 57k DSB：base × cos(2π·57k·t)，幅度 RDS 调制度 ~ 0.075（相对满偏）
         val out = FloatArray(base.size)
         val w = 2.0 * Math.PI * 57000 / sampleRate

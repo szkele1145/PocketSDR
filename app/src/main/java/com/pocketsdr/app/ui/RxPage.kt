@@ -60,6 +60,8 @@ fun RxPage(
     stereoLock: Float,
     rdsName: String,
     rdsLocked: Boolean = false,
+    /** 通过 CRC 的 RDS 块数——用来区分「这台没发 RDS」和「正在读台名」 */
+    rdsCrcOk: Int = 0,
     /** 插着 USB 设备但没连上时的提示条 */
     usbPending: String? = null,
     /** 提示条上的「去连接」→ 跳设置页 USB 诊断 */
@@ -294,7 +296,8 @@ fun RxPage(
                 val label = when {
                     rdsName.isNotEmpty() -> "📻 $rdsName"
                     rdsLocked -> "📻 RDS 同步·读台名中"
-                    else -> "📻 RDS 搜索中…"
+                    rdsCrcOk > 0 -> "📻 RDS 已锁定·凑台名中"
+                    else -> "📻 未收到 RDS"
                 }
                 Surface(
                     color = Color(0xCC101826), shape = RoundedCornerShape(8.dp),
@@ -304,7 +307,7 @@ fun RxPage(
                         label + if (stereoLock > 0.5f) " ·ST" else " ·单声道",
                         color = when {
                             rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
-                            rdsLocked -> Color(0xFF00E5FF)
+                            rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
                             else -> Color(0xFF5A6B7F)
                         },
                         fontSize = 12.sp,

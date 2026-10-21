@@ -50,6 +50,8 @@ fun AppShell(
     stereoLock: Float,
     rdsName: String,
     rdsLocked: Boolean = false,
+    /** 通过 CRC 的 RDS 块数 */
+    rdsCrcOk: Int = 0,
     /** 插着设备但未连接的提示（null = 无提示） */
     usbPending: String? = null,
     /** 最近一次硬件连接失败的完整原因（横幅上截断了，完整版在 USB 诊断页显示） */
@@ -78,6 +80,7 @@ fun AppShell(
                         stereoLock = stereoLock,
                         rdsName = rdsName,
                         rdsLocked = rdsLocked,
+                        rdsCrcOk = rdsCrcOk,
                         usbPending = usbPending,
                         // 提示条上的「去连接」：直接切到设置页的 USB 诊断
                         onOpenUsbDiag = { usbDiagFocus = true; page = 1 }

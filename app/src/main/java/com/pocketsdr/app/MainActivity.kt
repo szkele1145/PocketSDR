@@ -46,6 +46,8 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var rdsName by mutableStateOf("")
     /** RDS 是否已位同步（还没解出台名时，用于告诉用户"正在等"而不是"坏了"） */
     private var rdsLocked by mutableStateOf(false)
+    /** 通过 CRC 的 RDS 块数（诊断用：区分「没发 RDS」和「正在读台名」） */
+    private var rdsCrcOk by mutableStateOf(0)
     private var engineReady by mutableStateOf(false)
     /**
      * 插着 USB 设备但还没连上（授权未给 / VID 不在白名单）。
@@ -79,6 +81,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 stereoLock = engine?.stereoLock ?: 0f
                 rdsName = engine?.rds?.stationName ?: ""
                 rdsLocked = engine?.rds?.dataLock ?: false
+                rdsCrcOk = engine?.rds?.crcBlocksOk ?: 0
                 // 未连接提示跟着刷新：权限可能在后台被授予/撤销（用户到设置页操作）
                 refreshUsbPending()
             }
@@ -562,6 +565,7 @@ class MainActivity : ComponentActivity(), UiBridge {
                 stereoLock = stereoLock,
                 rdsName = rdsName,
                 rdsLocked = rdsLocked,
+                rdsCrcOk = rdsCrcOk,
                 usbPending = usbPendingText,
                 usbErrorFull = hwErrorFull,
                 onExit = { finish() }
