@@ -349,11 +349,23 @@ fun LogDialog(onDismiss: () -> Unit) {
                 Modifier.height(320.dp).verticalScroll(rememberScrollState())
             ) {
                 Column {
-                    logLines.take(200).forEach {
-                        Text(it, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                    // 崩溃堆栈是多行的：只有第一行带 E 标记，后面几十行堆栈
+                    // 都是普通行。这里做一次「崩溃态传染」——一旦出现 CRASH，
+                    // 紧随其后的缩进行（at xxx / Caused by / ...）都按错误色显示，
+                    // 否则用户在一片灰色里根本看不出这是一整段异常。
+                    var inCrash = false
+                    logLines.take(400).forEach { line ->
+                        if (line.contains("CRASH")) inCrash = true
+                        else if (line.isNotBlank() && !line.trimStart().startsWith("at ") &&
+                            !line.trimStart().startsWith("Caused by") &&
+                            !line.trimStart().startsWith("...") &&
+                            !line.trimStart().startsWith("Suppressed")) {
+                            inCrash = false
+                        }
+                        Text(line, fontSize = 9.sp, fontFamily = FontFamily.Monospace,
                             color = when {
-                                it.contains("/E/") -> Color(0xFFFF5252)
-                                it.contains("/W/") -> Color(0xFFF6D55C)
+                                inCrash || line.contains("/E/") -> Color(0xFFFF5252)
+                                line.contains("/W/") -> Color(0xFFF6D55C)
                                 else -> Color(0xFF8FA3B8)
                             })
                     }
@@ -362,15 +374,42 @@ fun LogDialog(onDismiss: () -> Unit) {
         },
         confirmButton = {
             val context = LocalContext.current
-            TextButton(onClick = {
-                // 落盘失败必须说：返回 null 时以前是静默的，
-                // 用户点了「落盘」什么都没发生，以为按钮坏了。
-                com.pocketsdr.app.SdrLog.save(context)?.let {
-                    android.widget.Toast.makeText(context, "已保存: $it", android.widget.Toast.LENGTH_SHORT).show()
-                } ?: android.widget.Toast.makeText(
-                    context, "日志落盘失败（存储不可用）", android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }) { Text("落盘") }
+            Row {
+                TextButton(onClick = {
+                    com.pocketsdr.app.SdrLog.save(context)?.let {
+                        android.widget.Toast.makeText(context, "已保存: $it", android.widget.Toast.LENGTH_SHORT).show()
+                    } ?: android.widget.Toast.makeText(
+                        context, "日志落盘失败（存储不可用）", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }) { Text("落盘") }
+                // 分享：落盘只给出一个文件路径，用户还得自己去文件管理器翻。
+                // 崩溃排查的实际动作是「把日志发给开发者」，所以直接给分享入口。
+                TextButton(onClick = {
+                    val path = com.pocketsdr.app.SdrLog.save(context)
+                    if (path == null) {
+                        android.widget.Toast.makeText(
+                            context, "日志落盘失败（存储不可用），无法分享",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        try {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context, context.packageName + ".files",
+                                java.io.File(path))
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, "PocketSDR 运行日志")
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(send, "分享日志"))
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(
+                                context, "分享失败：${e.message ?: "没有可用的应用"}",
+                                android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }) { Text("分享") }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
