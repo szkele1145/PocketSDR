@@ -51,11 +51,15 @@ class GainScanner(
         /**
          * 每档等待时间。
          *
-         * DSP 的统计窗口是 250ms（UI 轮询节拍），增益改完之后新的数据块
-         * 要经过滤波器组才反映到 [SdrEngine.noiseFloorDb] 上。
-         * 300ms 留出余量，24 档总共约 7 秒——可接受。
+         * 引擎的噪声底统计每 8 帧一次（16ms/帧 → 128ms 一轮），
+         * 而 [SdrEngine.resetNoiseStats] 之后还有 4 帧要跳过平滑，
+         * 那 4 帧正是「纯属于本档」的数据。要等它们跑完才读，
+         * 否则读到的还是上一档的残留（底噪用 0.7/0.3 平滑，混在一起
+         * 用来比较哪一档更好会得出错误结论）。
+         *
+         * 128ms × 4 ≈ 512ms，取 550ms 留余量。24 档共约 13 秒。
          */
-        private const val SETTLE_MS = 300L
+        private const val SETTLE_MS = 550L
     }
 
     /** 单档测量结果 */
@@ -123,6 +127,9 @@ class GainScanner(
                     onProgress(i + 1, total)
                     continue
                 }
+                // 丢掉上一档残留的统计值：不清的话读到的是两个档位的混合，
+                // 用来比较哪一档更好会得出错误结论。
+                engine.resetNoiseStats()
                 try {
                     Thread.sleep(SETTLE_MS)
                 } catch (_: InterruptedException) {
@@ -131,8 +138,11 @@ class GainScanner(
                 }
                 val floor = engine.noiseFloorDb
                 val peak = engine.spectrumPeakDb
-                // 数据完全无效的档位（噪声底是个初始化占位值）不入表
-                if (floor.isFinite() && peak.isFinite() && floor < 0f && peak <= 0f) {
+                // 数据完全无效的档位不入表：
+                // - 非有限数（NaN/Inf）说明统计还没跑起来
+                // - peak 必须高于 floor，否则这两个数不是同一份统计的结果
+                //   （比如还在用引擎的初始占位值 -85/-30）
+                if (floor.isFinite() && peak.isFinite() && floor < 0f && peak <= 0f && peak > floor) {
                     steps.add(Step(g, floor, peak))
                 }
                 onProgress(i + 1, total)

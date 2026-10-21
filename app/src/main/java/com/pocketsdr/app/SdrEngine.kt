@@ -201,7 +201,31 @@ class SdrEngine private constructor(
 
     private val noiseSortBuf = FloatArray(256)   // 噪声底统计采样缓冲
     private var noiseFill = 0
-    private var noiseCount = 0
+    /** 统计样本数：@Volatile 是因为增益扫描线程会调 [resetNoiseStats] */
+    @Volatile private var noiseCount = 0
+    /**
+     * 还要跳过多少帧平滑。
+     *
+     * reset 之后只有**第一帧**是纯新值，第二帧就变成 0.7/0.3 的混合了。
+     * 增益扫描要读的是「这一档自己的」底噪，混合值会得出错误结论，
+     * 所以重置后连续若干帧都直接采用新值。
+     */
+    @Volatile private var noiseSkipSmooth = 0
+
+    /**
+     * 丢弃当前的噪声底/峰值统计，让下一帧统计**直接采用新值**而不做平滑。
+     *
+     * 平滑是为了让 UI 上的读数不跳——但增益一变，旧档位的值就变成了「残留」：
+     * 底噪用 0.7/0.3 平滑，300 ms 后旧值还占一半，读到的是两个档位的混合，
+     * 用来比较哪一档更好会得出错误结论。
+     *
+     * 增益扫描每换一档就调一次这个方法，测到的就是**该档自己的**噪声底。
+     */
+    fun resetNoiseStats() {
+        noiseCount = 0
+        // 接下来的 4 帧（约 0.5 秒）都直接采用新值，不与旧档位混合
+        noiseSkipSmooth = 4
+    }
 
     /**
      * 峰值保持缓冲（SDR# 的 Peak Hold）。
@@ -628,9 +652,17 @@ class SdrEngine private constructor(
         val slice = noiseSortBuf.copyOf(c)
         java.util.Arrays.sort(slice)
         val floor = slice[(c / 4).coerceIn(0, c - 1)]
-        // 平滑：底噪变化慢，突变说明增益变了，1 秒内跟上
-        noiseFloorDb = if (noiseCount == 0) floor else 0.7f * noiseFloorDb + 0.3f * floor
-        spectrumPeakDb = if (noiseCount == 0) peak else 0.5f * spectrumPeakDb + 0.5f * peak
+        // 平滑：底噪变化慢，突变说明增益变了，1 秒内跟上。
+        // 但刚被 reset 过的那几帧要跳过平滑——那几帧的数据属于新档位，
+        // 和旧档位混在一起会得出错误的比较结论。
+        if (noiseSkipSmooth > 0) {
+            noiseSkipSmooth--
+            noiseFloorDb = floor
+            spectrumPeakDb = peak
+        } else {
+            noiseFloorDb = if (noiseCount == 0) floor else 0.7f * noiseFloorDb + 0.3f * floor
+            spectrumPeakDb = if (noiseCount == 0) peak else 0.5f * spectrumPeakDb + 0.5f * peak
+        }
         noiseCount++
     }
 
