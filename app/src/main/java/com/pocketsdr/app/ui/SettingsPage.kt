@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FreqStore
@@ -239,11 +240,25 @@ fun SettingsPage(
                 var ppm by remember { mutableStateOf(engine.hardwarePpm.toFloat()) }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("频率校准", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                    // 归零：调乱之后必须能一键回到「不补偿」。
+                    // 以前滑条没有吸附、没有刻度，手指抖一下就是十几 ppm，
+                    // 想精确调回 0 几乎做不到——而 0 是唯一已知安全的默认值。
+                    TextButton(
+                        onClick = {
+                            ppm = 0f
+                            store.hwPpm = 0
+                            engine.setHardwarePpm(0)
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+                    ) { Text("归零", fontSize = 10.sp, color = Color(0xFF5A6B7F)) }
                     Slider(
                         value = ppm,
                         onValueChange = {
-                            ppm = it
-                            val v = Math.round(it)
+                            // 吸附到整数：ppm 是千分之一级参数，浮点滑条毫无意义，
+                            // 存进去的本来也是 Int，显示浮点只会让用户以为能调得更细。
+                            val snapped = Math.round(it).toFloat()
+                            ppm = snapped
+                            val v = snapped.toInt()
                             store.hwPpm = v
                             engine.setHardwarePpm(v)
                         },
@@ -251,9 +266,40 @@ fun SettingsPage(
                         modifier = Modifier.weight(1f),
                         colors = SliderDefaults.colors(thumbColor = Color(0xFFF6D55C))
                     )
-                    Text("%+.0f ppm".format(ppm), fontSize = 11.sp,
-                        color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
+                    // ppm 对用户是完全抽象的单位：20 ppm 到底是严重还是无所谓？
+                    // 换算成「在 100 MHz 处偏了多少 kHz」才有判断依据——
+                    // 而 100 MHz 正是 FM 广播所在，用户最常听。
+                    Text(
+                        "%+.0f ppm".format(ppm),
+                        fontSize = 11.sp,
+                        color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace
+                    )
+                    // ±1 精调：滑条无法做出一 ppm 级别的调整，
+                    // 而标定到这个精度才真正有用（10ppm 在 100MHz 就是 1kHz）。
+                    TextButton(
+                        onClick = {
+                            val v = (Math.round(ppm).toInt() - 1).coerceIn(-100, 100)
+                            ppm = v.toFloat()
+                            store.hwPpm = v
+                            engine.setHardwarePpm(v)
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
+                    ) { Text("−", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF6D55C)) }
+                    TextButton(
+                        onClick = {
+                            val v = (Math.round(ppm).toInt() + 1).coerceIn(-100, 100)
+                            ppm = v.toFloat()
+                            store.hwPpm = v
+                            engine.setHardwarePpm(v)
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
+                    ) { Text("+", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF6D55C)) }
                 }
+                // 把抽象的 ppm 翻译成用户能判断的 kHz
+                Text(
+                    "在 100 MHz 处相当于偏移 %+.1f kHz".format(ppm * 100_000_000f / 1_000_000f / 1000f),
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F), fontFamily = FontFamily.Monospace
+                )
                 Text("听到的信号比实际频率偏低（听不清）就往正调，偏高往负调。一次标定全频段通用。",
                     fontSize = 10.sp, color = Color(0xFF5A6B7F))
             }
