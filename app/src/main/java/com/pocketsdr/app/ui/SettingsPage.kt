@@ -183,52 +183,69 @@ fun SettingsPage(
                     modifier = Modifier.weight(1f)) { Text("📄 日志", fontSize = 12.sp) }
             }
         }
+        // 增益单独成组：仿真源也实现了增益模型，
+        // 所以没硬件时也能学这套操作、也能验证增益寻优的逻辑。
+        // （以前增益藏在「RTL 硬件」组里，仿真下完全看不到。）
+        GroupCard(if (engine.isRealSource) "LNA 增益" else "LNA 增益（仿真）") {
+            // 仿真下不读也不写 store 里的硬件增益设置：
+            // 那两个字段是「真机硬件」的状态，仿真时改它们，
+            // 会让用户插上真机后莫名其妙继承了仿真里试出来的档位。
+            val real = engine.isRealSource
+            var manualGain by remember {
+                mutableStateOf(if (real) store.hwManualGain else false)
+            }
+            var gainIdx by remember {
+                mutableStateOf(if (real) store.hwGainIndex.toFloat() else 7f)
+            }
+            // 增益设置被硬件拒绝：界面上档位变了，硬件其实没动，
+            // 信号强度纹丝不动——不提示的话用户会以为增益坏了。
+            var gainFailed by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("手动增益", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                Switch(checked = manualGain, onCheckedChange = {
+                    manualGain = it
+                    if (real) store.hwManualGain = it
+                    gainFailed = !engine.setHardwareGainMode(it)
+                }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
+                if (manualGain) {
+                    Slider(
+                        value = gainIdx,
+                        onValueChange = {
+                            gainIdx = it
+                            val idx = it.toInt().coerceIn(0, engine.lnaGains.size - 1)
+                            if (real) store.hwGainIndex = idx
+                            gainFailed = !engine.setHardwareLnaGain(engine.lnaGains[idx])
+                        },
+                        valueRange = 0f..(engine.lnaGains.size - 1).toFloat(),
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(thumbColor = Color(0xFFF6D55C))
+                    )
+                    Text("%.1fdB".format(engine.lnaGains[gainIdx.toInt().coerceIn(0, engine.lnaGains.size - 1)] / 10f),
+                        fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
+                }
+            }
+            if (gainFailed) {
+                Text("⚠ 增益设置未被硬件接受（档位只显示在界面上，实际没生效）——检查 USB 连接",
+                    fontSize = 10.sp, color = Color(0xFFFF6B6B))
+            }
+            // 增益自动寻优：老手是「一档一档推着听」，这可以自动化。
+            // 扫完全部档位，量出每档的噪声底与峰值，挑出不过载前提下 SNR 最高的那档。
+            OutlinedButton(
+                onClick = { showGainTune = true },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("⚡ 增益自动寻优", fontSize = 12.sp) }
+            if (!engine.isRealSource) {
+                Text("仿真模式下增益会真实改变信号强度（高档位会削顶），可以用来熟悉这套操作",
+                    fontSize = 10.sp, color = Color(0xFF5A6B7F))
+            }
+        }
         if (engine.isRealSource) {
             GroupCard("RTL 硬件") {
                 // 初始值从 store 读，改动立刻写回：以前这几个都是 remember 本地态，
                 // 退出应用再进来全部回到默认值，用户每次都要重调一遍。
-                var manualGain by remember { mutableStateOf(store.hwManualGain) }
-                var gainIdx by remember { mutableStateOf(store.hwGainIndex.toFloat()) }
                 var hfDirect by remember { mutableStateOf(store.hwDirectSampling != 0) }
                 var offTune by remember { mutableStateOf(store.hwOffsetTuning) }
-                // 增益设置被硬件拒绝：界面上档位变了，硬件其实没动，
-                // 信号强度纹丝不动——不提示的话用户会以为增益坏了。
-                var gainFailed by remember { mutableStateOf(false) }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("LNA 增益", fontSize = 12.sp, color = Color(0xFF8FA3B8))
-                    Switch(checked = manualGain, onCheckedChange = {
-                        manualGain = it
-                        store.hwManualGain = it
-                        gainFailed = !engine.setHardwareGainMode(it)
-                    }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
-                    if (manualGain) {
-                        Slider(
-                            value = gainIdx,
-                            onValueChange = {
-                                gainIdx = it
-                                val idx = it.toInt().coerceIn(0, engine.lnaGains.size - 1)
-                                store.hwGainIndex = idx
-                                gainFailed = !engine.setHardwareLnaGain(engine.lnaGains[idx])
-                            },
-                            valueRange = 0f..(engine.lnaGains.size - 1).toFloat(),
-                            modifier = Modifier.weight(1f),
-                            colors = SliderDefaults.colors(thumbColor = Color(0xFFF6D55C))
-                        )
-                        Text("%.1fdB".format(engine.lnaGains[gainIdx.toInt().coerceIn(0, engine.lnaGains.size - 1)] / 10f),
-                            fontSize = 11.sp, color = Color(0xFFF6D55C), fontFamily = FontFamily.Monospace)
-                    }
-                }
-                if (gainFailed) {
-                    Text("⚠ 增益设置未被硬件接受（档位只显示在界面上，实际没生效）——检查 USB 连接",
-                        fontSize = 10.sp, color = Color(0xFFFF6B6B))
-                }
-                // 增益自动寻优：老手是「一档一档推着听」，这可以自动化。
-                // 扫完 24 档，量出每档噪声底与峰值，挑出不过载前提下 SNR 最高的那档。
-                OutlinedButton(
-                    onClick = { showGainTune = true },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("⚡ 增益自动寻优", fontSize = 12.sp) }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("HF 直采", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = hfDirect, onCheckedChange = {
@@ -438,13 +455,14 @@ fun SettingsPage(
             engine = engine,
             onDismiss = { showGainTune = false },
             onAdopt = { gain ->
-                // 采用推荐档：切到手动增益并落到那一档，同时写回 store，
-                // 下次连上硬件还是这个值。
-                store.hwManualGain = true
+                // 采用推荐档：切到手动增益并落到那一档。
+                // 真机下写回 store，下次连上还是这个值；
+                // 仿真下不写——那是硬件的设置，不该被仿真污染。
+                if (engine.isRealSource) store.hwManualGain = true
                 engine.setHardwareGainMode(true)
                 engine.setHardwareLnaGain(gain)
                 val idx = engine.lnaGains.indexOfFirst { it == gain }
-                if (idx >= 0) store.hwGainIndex = idx
+                if (idx >= 0 && engine.isRealSource) store.hwGainIndex = idx
             }
         )
     }

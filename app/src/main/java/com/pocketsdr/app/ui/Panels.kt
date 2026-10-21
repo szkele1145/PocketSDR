@@ -743,7 +743,7 @@ fun GainTuneDialog(
                         }
                         if (r.steps.any { it.clipped }) {
                             Spacer(Modifier.height(4.dp))
-                            Text("红色 = 该档已削顶（峰值 ≥ -3dB），再往上只会更糟。",
+                            Text("红色 = 该档已过载（ADC 削顶，或信噪比已比最佳档回落 3dB 以上）——再往上只会更糟。",
                                 fontSize = 10.sp, color = Color(0xFFFF66B6B))
                         }
                     }

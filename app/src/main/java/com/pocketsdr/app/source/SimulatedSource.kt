@@ -55,6 +55,63 @@ class SimulatedSource(
 
     private val stations = ArrayList<Station>()
 
+    /**
+     * 模拟的 LNA 增益档（tenths dB，即 0.1 dB 为单位：-99 = -9.9 dB）。
+     *
+     * 仿真源以前完全不管增益：设什么档，信号强度纹丝不动。
+     * 后果是「增益自动寻优」在仿真下测出来 23 档全一样，
+     * 推荐结果毫无意义——用户既学不会这套操作，我也没法自验证。
+     *
+     * 现在按 FC0013 的实际档位行为建模：
+     *
+     * - 档位越低，信号与底噪被放大的越少 → 弱台淹没在 ADC 量化噪声里
+     * - 档位越高，放大越多 → 强台把 ADC 推过满量程
+     * - 超过满量程的部分**削平**（ADC 削顶）→ 高档位的谱峰被压在同一高度
+     *
+     * 于是「增益越高越好」在仿真里也会不成立，和真机一致。
+     */
+    @Volatile var simGainTenthDb: Int = 0
+        private set
+
+    /** 仿真是否处于手动增益模式（自动模式时不改幅度） */
+    @Volatile var simManualGain: Boolean = false
+        private set
+
+    fun setLnaGain(tenthDb: Int): Boolean {
+        simGainTenthDb = tenthDb
+        return true
+    }
+
+    fun setGainMode(manual: Boolean): Boolean {
+        simManualGain = manual
+        return true
+    }
+
+    /**
+     * 档位 → 有效增益（dB），再折算成幅度系数。
+     *
+     * FC0013 的档位不是纯 LNA 增益，而是 LNA/Mixer/IF 的组合。
+     * 这里做分段压缩，保留「档位越高放得越多、但会过载」的定性关系：
+     *
+     * - 负段（-9.9…-5.4 dB，7 档）：信号被压到 ADC 量化噪声附近 → 弱台听不见
+     * - 中段（5.8…7.1 dB，8 档）：正常工作区，SNR 最好
+     * - 高段（17.9…19.7 dB，8 档）：IF 增益拉满 → 强台把 ADC 推过满量程
+     */
+    private fun gainAmplitude(): Float {
+        if (!simManualGain) return 1f
+        val db = simGainTenthDb / 10f
+        val eff = when {
+            // 负段（-9.9…-5.4 dB）：压低 30dB 上下，
+            // 让信号落到量化噪声附近——弱台完全听不见
+            db < 0f -> -30f + (db + 9.9f) * 0.6f
+            // 中段（5.8…7.1 dB）：正常工作区，SNR 最好且不过载
+            db <= 7.1f -> db + 4f
+            // 高段（17.9…19.7 dB）：IF 增益拉满，把 ADC 推过满量程
+            else -> db + 20f
+        }
+        return Math.pow(10.0, (eff / 20.0).toDouble()).toFloat()
+    }
+
     // RDS 波形（96.6 台专用，预生成循环）
     private var rdsWave: FloatArray? = null
     private var rdsPos = 0
@@ -66,6 +123,24 @@ class SimulatedSource(
         noiseSeed = noiseSeed xor (noiseSeed shl 17)
         return ((noiseSeed shr 40).toInt() / 8388608.0).toFloat()
     }
+
+    /**
+     * ADC 量化噪声幅度（固定，**不随增益放大**）。
+     *
+     * 这是让仿真增益行为「像真机」的关键。
+     *
+     * 真实链路里热噪声会被 LNA 一起放大，所以单纯放大信号和噪声，
+     * 信噪比是不变的——那样的话增益寻优在仿真里必然测不出任何差别。
+     *
+     * 但 ADC 的量化噪声产生在放大器**之后**，不随 LNA 增益变化。于是：
+     *
+     * - 增益低：信号被放大得少，量化噪声占比大 → SNR 差（弱台听不见）
+     * - 增益高：信号远超量化噪声 → SNR 好（弱台浮出底噪）
+     * - 增益过头：ADC 满量程 → 削顶失真
+     *
+     * 这三条正好是增益寻优要找的那三条边界。
+     */
+    private val quantizationNoise = 0.004f
 
     private fun ensureStations() {
         if (stations.isNotEmpty()) return
@@ -125,12 +200,20 @@ class SimulatedSource(
         rebuildBandCache()
         val fs = sampleRate
         val twoPiOverFs = 2.0 * PI / fs
+        // 增益与削顶：见 [gainAmplitude]。满量程取 0.9，
+        // 对应 dBFS 约 -0.9 dB——增益寻优的削顶判据是 -3 dBFS，
+        // 仿真下高增益档会稳稳越过那条线，行为与真机一致。
+        val gAmp = gainAmplitude()
+        val clip = 0.9
         // 带外台相位批量推进（每样本仍要推进防回跳，但无需判断分支）
         val outAdv = outBandAdvances
         val inBand = inBandStations
         for (s in 0 until nSamples) {
-            var accI = nextNoise() * 0.05
-            var accQ = nextNoise() * 0.05
+            // 热噪声（随 LNA 增益放大）。量化噪声不在这里加——
+            // 它产生在放大器之后，不能跟着增益一起放大，
+            // 所以要留到增益乘完之后再加（见文件末尾）。
+            var accI = nextNoise() * 0.01
+            var accQ = nextNoise() * 0.01
             for (st in outAdv) {
                 st.first.carrierPhase += st.second
             }
@@ -194,8 +277,12 @@ class SimulatedSource(
                 if (st.carrierPhase > TWO_PI) st.carrierPhase -= TWO_PI
                 if (st.carrierPhase < 0.0) st.carrierPhase += TWO_PI
             }
-            out[s * 2] = accI.toFloat()
-            out[s * 2 + 1] = accQ.toFloat()
+            // 增益只作用在「信号 + 热噪声」上，量化噪声最后单独加
+            // （量化在放大器之后，不随 LNA 增益变化——见 [quantizationNoise]）
+            val i2 = (accI * gAmp + nextNoise() * quantizationNoise).coerceIn(-clip, clip)
+            val q2 = (accQ * gAmp + nextNoise() * quantizationNoise).coerceIn(-clip, clip)
+            out[s * 2] = i2.toFloat()
+            out[s * 2 + 1] = q2.toFloat()
         }
         return nSamples
     }

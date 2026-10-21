@@ -32,35 +32,52 @@ class SdrEngine private constructor(
     val isRealSource: Boolean get() = source.isReal
 
     /**
-     * 硬件 LNA 增益（tenths dB），仿真源 no-op。
+     * 硬件 LNA 增益（tenths dB）。
      *
      * 返回是否被硬件接受：增益设置失败时，界面上的档位和硬件实际档位
      * 就对不上了——用户以为增益调上去了，信号强度却纹丝不动，
      * 看起来像增益功能坏了。返回失败才能让 UI 说出这一点。
+     *
+     * 仿真源也实现了增益（见 [com.pocketsdr.app.source.SimulatedSource]），
+     * 这样没有硬件时也能体验、也能验证增益寻优这套逻辑。
      */
     fun setHardwareLnaGain(tenthsDb: Int): Boolean {
-        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return true
-        return src.setLnaGain(tenthsDb)
+        return when (val s = source) {
+            is com.pocketsdr.app.source.rtl.RtlUsbSource -> s.setLnaGain(tenthsDb)
+            is com.pocketsdr.app.source.SimulatedSource -> s.setLnaGain(tenthsDb)
+            else -> true
+        }
     }
 
     /** 硬件手动增益模式；返回是否被硬件接受（理由同 [setHardwareLnaGain]） */
     fun setHardwareGainMode(manual: Boolean): Boolean {
-        val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return true
-        return src.setGainMode(manual)
+        return when (val s = source) {
+            is com.pocketsdr.app.source.rtl.RtlUsbSource -> s.setGainMode(manual)
+            is com.pocketsdr.app.source.SimulatedSource -> s.setGainMode(manual)
+            else -> true
+        }
     }
 
     /**
-     * 当前生效的 LNA 增益（tenths dB），仿真源返回 0。
+     * 当前生效的 LNA 增益（tenths dB）。
      *
      * 增益扫描要能恢复用户原来的那一档，就必须有「读」的能力——
      * 以前只有「设」，没有「读」。
      */
     val hardwareLnaGain: Int
-        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.currentLnaGain ?: 0
+        get() = when (val s = source) {
+            is com.pocketsdr.app.source.rtl.RtlUsbSource -> s.currentLnaGain
+            is com.pocketsdr.app.source.SimulatedSource -> s.simGainTenthDb
+            else -> 0
+        }
 
-    /** 当前是否为手动增益模式（仿真源恒为 false） */
+    /** 当前是否为手动增益模式 */
     val hardwareManualGain: Boolean
-        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.manualGainMode ?: false
+        get() = when (val s = source) {
+            is com.pocketsdr.app.source.rtl.RtlUsbSource -> s.manualGainMode
+            is com.pocketsdr.app.source.SimulatedSource -> s.simManualGain
+            else -> false
+        }
 
     /** 硬件直接采样模式（0=关 1=I-ADC 2=Q-ADC），HF 短波用 */
     fun setHardwareDirectSampling(mode: Int): Boolean {

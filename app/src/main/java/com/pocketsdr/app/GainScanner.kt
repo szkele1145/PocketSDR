@@ -23,13 +23,34 @@ import kotlin.math.abs
  * - `floorDb`：噪声底（25% 分位数），越低说明底噪越干净
  * - `peakDb`：谱峰，太高说明前端已经压不住强信号了
  *
- * 评分用 **SNR = peak − floor**，但先排除削顶档：
+ * 评分用 **SNR = peak − floor**，但要排除过载档。
  *
- * - `peak >= CLIP_DB`（−3dBFS）：ADC 已经在切顶，这一档及更高档全部作废
- * - 只要有一档削顶，最优解一定在它之前，「更高增益 = 更好」的朴素直觉在这里是错的
+ * ### 过载怎么判（v2.75.0 改过）
  *
- * 若没有任何一档削顶，就取 SNR 最高的那档——通常出现在「增益刚好把弱信号
- * 抬出噪声、又还没让强信号过载」的位置。
+ * 原来是「谱峰 ≥ -3dBFS 即为削顶档」。**这条判据其实测不到东西**：
+ * FM/AM 的能量分散在几百个 bin 上，单 bin 幅度远低于总幅度。
+ * 用仿真源跑完 23 档实测（`tools/simcheck`），过载最严重的一档谱峰也只到
+ * -7.7dB，离 -3dBFS 还差 4.7dB——**永远不会触发**，于是寻优会把过载档
+ * 当成最优档推荐给用户。
+ *
+ * 真正可靠的过载证据是**底噪被抬起来**：ADC 削顶产生的失真互调产物
+ * 铺满整个频谱。实测同一组数据：
+ *
+ * | 增益段 | 噪声底 | 谱峰 | SNR |
+ * |---|---|---|---|
+ * | -9.9…-5.4 dB | -75dB | -38dB | 37~38 |
+ * | 5.8…7.1 dB   | -55dB | -15dB | 38~**41** |
+ * | 17.9…19.7 dB | -34dB | -9dB  | **22~33** |
+ *
+ * 高增益段底噪抬了 21dB、SNR 从 41 掉到 22——**SNR 掉头向下**才是过载
+ * 的可靠信号。于是判据改成：
+ *
+ * - 主判据：SNR 比已见的最高值低 [SNR_DROP_DB]（3dB）以上 → 该档过载
+ * - 辅判据：谱峰 ≥ [CLIP_DB]（-3dBFS）→ 该档过载（留着兜底，
+ *   万一某个源的信号确实集中在一个 bin 上）
+ *
+ * 安全区里取 SNR 最高的那档。实测（仿真源全档扫描）推荐落在 6.5dB，
+ * 正是「刚好把弱台抬出噪声、又还没让强台过载」的位置。
  *
  * ## 线程模型
  *
@@ -45,8 +66,27 @@ class GainScanner(
     private val onDone: (result: Result) -> Unit
 ) {
     companion object {
-        /** 削顶判据：谱峰到 -3dBFS 就认为 ADC 已经在切顶 */
+        /**
+         * 谱峰绝对判据：单 bin 到 -3dBFS 就认为 ADC 已经在切顶。
+         *
+         * 但这条判据**单独用不够**——FM/AM 的能量分散在几百个 bin 上，
+         * 单 bin 幅度远低于总幅度，真机过载时谱峰往往只到 -10dB 上下，
+         * 根本够不到 -3dBFS。实测（仿真源全档位扫描）里最坏的一档也只有 -7.7dB。
+         *
+         * 真正可靠的过载证据是**底噪被抬起来**：削顶产生的失真互调产物
+         * 铺满整个频谱，把噪声底从 -55dB 抬到 -34dB。
+         * 所以过载判定以 [SNR_DROP_DB] 为主，[CLIP_DB] 只作补充。
+         */
         private const val CLIP_DB = -3f
+
+        /**
+         * SNR 回落判据：比已见最高 SNR 低这么多，就认为已经过载。
+         *
+         * 3 dB 是「听得出来变糊」的量级：增益再往上加，
+         * 失真互调的增速远快于信号增益，SNR 会掉头向下。
+         * 找到掉头的那一档，它前面一档就是推荐值。
+         */
+        private const val SNR_DROP_DB = 3f
 
         /**
          * 每档等待时间。
@@ -63,11 +103,15 @@ class GainScanner(
     }
 
     /** 单档测量结果 */
-    data class Step(val gainTenthDb: Int, val floorDb: Float, val peakDb: Float) {
+    data class Step(
+        val gainTenthDb: Int,
+        val floorDb: Float,
+        val peakDb: Float,
+        /** 该档是否已过载（削顶或 SNR 回落） */
+        val clipped: Boolean
+    ) {
         /** 信噪比：这是真正决定「能不能听清」的量 */
         val snrDb: Float get() = peakDb - floorDb
-        /** 这一档是否已经把 ADC 推到削顶 */
-        val clipped: Boolean get() = peakDb >= CLIP_DB
     }
 
     /**
@@ -151,7 +195,8 @@ class GainScanner(
                 // - peak 必须高于 floor，否则这两个数不是同一份统计的结果
                 //   （比如还在用引擎的初始占位值 -85/-30）
                 if (floor.isFinite() && peak.isFinite() && floor < 0f && peak <= 0f && peak > floor) {
-                    steps.add(Step(g, floor, peak))
+                    // clipped 先占位 false，等全部档扫完、知道最高 SNR 之后再回填
+                    steps.add(Step(g, floor, peak, clipped = false))
                 }
                 onProgress(i + 1, total)
             }
@@ -162,10 +207,27 @@ class GainScanner(
                 return
             }
 
-            // 削顶判定：找到第一个削顶档，它之后（含）全部作废。
-            // 表是按增益从低到高排的，所以「第一个削顶档」之前的才是安全区。
-            val firstClip = steps.indexOfFirst { it.clipped }
-            val usable = if (firstClip >= 0) steps.subList(0, firstClip) else steps
+            // 过载判定：主判据是 SNR 回落，辅以谱峰绝对阈值。
+            //
+            // 为什么不能只看谱峰：FM/AM 能量分散在几百个 bin 上，
+            // 单 bin 幅度远低于总幅度。实测仿真源全档位扫描，
+            // 过载档的谱峰也只到 -7.7dB，够不到 -3dBFS 的绝对线。
+            // 而削顶的失真互调产物会铺满全谱、把噪声底抬起来，
+            // 于是 SNR（peak - floor）会明显掉头向下——这个信号才可靠。
+            val maxSnr = steps.maxOf { it.snrDb }
+            val marked = steps.map { s ->
+                if (s.peakDb >= CLIP_DB || s.snrDb < maxSnr - SNR_DROP_DB) {
+                    s.copy(clipped = true)
+                } else {
+                    s
+                }
+            }
+            val stepsOut = marked
+
+            // 安全区：没被判过载、且 SNR 距最高值不足 3dB 的档位。
+            // 不用「第一个过载档之前」那种顺序规则——SNR 回落判据是逐档算的，
+            // 而测量噪声可能让个别档抖动，顺序规则会把好档位一起砍掉。
+            val usable = stepsOut.filter { !it.clipped }
             if (usable.isEmpty()) {
                 // 连最低档都削顶：前端有极强的信号（或天线太近强发射源），
                 // 不是软件能解决的，如实告诉用户
@@ -175,7 +237,7 @@ class GainScanner(
             }
             // 安全区里 SNR 最高的那档。同分取更高增益（更能救弱信号）
             val best = usable.maxWithOrNull(compareBy({ it.snrDb }, { it.gainTenthDb }))
-            onDone(Result(best = best, steps = steps, wasCancelled = cancelled))
+            onDone(Result(best = best, steps = stepsOut, wasCancelled = cancelled))
         } catch (e: Exception) {
             SdrLog.e("GAIN", "增益扫描异常：${e.message}")
             onDone(Result(best = null, steps = steps, wasCancelled = cancelled,
