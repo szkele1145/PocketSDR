@@ -90,6 +90,8 @@ fun RxPage(
     /** 录音失败原因（磁盘满等）；非空时显示在录音按钮旁 */
     var recError by remember { mutableStateOf<String?>(null) }
     var muted by remember { mutableStateOf(engine.muted) }
+    /** 因来电/导航播报暂时让出声音（系统决定，点静音键没用） */
+    var focusMuted by remember { mutableStateOf(engine.focusMuted) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
@@ -169,6 +171,7 @@ fun RxPage(
             if (engine.squelchDb != squelch) squelch = engine.squelchDb
             if (engine.volume != volume) volume = engine.volume
             if (engine.muted != muted) muted = engine.muted
+            if (engine.focusMuted != focusMuted) focusMuted = engine.focusMuted
             if (engine.squelchIsOpen != squelchOpen) squelchOpen = engine.squelchIsOpen
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.tunedFreq to engine.signalDb)
@@ -498,17 +501,29 @@ fun RxPage(
                         modifier = Modifier.padding(start = 4.dp).width(34.dp)
                     )
                     // 静音开关：SDR 时想临时静音又不想关录音/断流，直接点
+                    //
+                    // 三种状态要分清：
+                    // - 「静音」：用户没静音，点了会静音
+                    // - 「静音中」：用户自己按了静音
+                    // - 「让声中」：因来电/导航播报暂时让出声音——这是系统决定的，
+                    //   点按钮没用，界面上必须说清楚，否则用户会反复点
                     OutlinedButton(
                         onClick = { engine.muted = !engine.muted; muted = engine.muted },
                         modifier = Modifier.padding(horizontal = 4.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8)),
+                            contentColor = if (muted || focusMuted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8)),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
                     ) {
-                        Text(if (muted) "🔇 静音中" else "🔊 静音", fontSize = 11.sp,
+                        Text(
+                            when {
+                                focusMuted -> "☎ 让声中"
+                                muted -> "🔇 静音中"
+                                else -> "🔊 静音"
+                            },
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (muted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8))
+                            color = if (muted || focusMuted) Color(0xFFFF6B6B) else Color(0xFF8FA3B8))
                     }
                     Spacer(Modifier.width(14.dp))
                     // 录音开关：录音中红底高亮，一眼可见；未录音灰底。

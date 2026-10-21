@@ -109,6 +109,33 @@ class SdrEngine private constructor(
     @Volatile var volume: Float = 0.8f
     /** 扫描时临时静音（防跳频爆音） */
     @Volatile var muted: Boolean = false
+    /**
+     * 因音频焦点丢失而暂时让出声音（来电、导航播报）。
+     *
+     * 与 [muted] 分开是为了**语义正确**：
+     *
+     * - [muted] 是用户按了静音键 —— 界面该显示「静音中」
+     * - 本标志是系统让我们让路 —— 界面该显示「通话中」，
+     *   如果也显示成「静音中」，用户会以为是自己按了静音，
+     *   然后去点那个按钮想取消——点了也没用，因为让路是系统决定的
+     *
+     * 以前两者混用一个标志，来电时界面会莫名其妙变成红色的「🔇 静音中」。
+     */
+    @Volatile var focusMuted: Boolean = false
+        private set
+
+    /** 实际是否输出声音：用户静音或焦点让出，任一成立都不出声 */
+    val outputMuted: Boolean get() = muted || focusMuted
+
+    /**
+     * 设置「因焦点让出声音」标志。
+     *
+     * 由音频焦点回调调用，不改 [muted]——用户的静音偏好必须原样保留，
+     * 否则通话结束后恢复声音时，会把用户自己设的静音也一起解除。
+     */
+    fun setFocusMuted(v: Boolean) {
+        focusMuted = v
+    }
     @Volatile var squelchDb: Float = -40f          // 静噪阈值 dBFS（-100..0）
     @Volatile private var _centerFreq: Long = 98_000_000
     @Volatile private var _tunedFreq: Long = 98_100_000
@@ -550,6 +577,29 @@ class SdrEngine private constructor(
      */
     private fun emitAudio(track: android.media.AudioTrack, frames: Int) {
         if (frames <= 0) return
+        // 录音不受静音影响。
+        //
+        // 用户按静音通常是因为不想外放（地铁、办公室、深夜），
+        // 不是不想录——SDR 用户经常一边静音听一边把信号录下来。
+        // 以前录音写在扬声器写入的同一个分支里，一静音录音就停了，
+        // 用户录到的是一段空文件，而且界面上没有任何提示。
+        recorder?.write(audioFrames, frames * 2)
+        if (outputMuted) {
+            // 静音时照样喂 AudioTrack（全零），只是不发出声音。
+            //
+            // 为什么不直接不写：AudioTrack 的缓冲区会欠载，
+            // 恢复声音的瞬间会先放出一段已经过期的旧音频——「咔」的一声爆音。
+            // 持续喂零能让播放流保持连续，恢复时干净。
+            val n = track.write(muteBuf, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
+            if (n < 0) {
+                audioWriteFailures++
+                if (audioWriteFailures == 1) {
+                    SdrLog.e("DSP", "音频写入失败（$n）——AudioTrack 可能已失效")
+                    ui.pushStatus("⚠ 音频输出已失效（写入失败 $audioWriteFailures 次），请重新打开应用")
+                }
+            }
+            return
+        }
         val n = track.write(audioFrames, 0, frames * 2, android.media.AudioTrack.WRITE_BLOCKING)
         if (n < 0) {
             audioWriteFailures++
@@ -558,7 +608,6 @@ class SdrEngine private constructor(
                 ui.pushStatus("⚠ 音频输出已失效（写入失败 $audioWriteFailures 次），请重新打开应用")
             }
         }
-        recorder?.write(audioFrames, frames * 2)
     }
 
     // ---------- DSP 主循环 ----------
@@ -712,7 +761,7 @@ class SdrEngine private constructor(
             }
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen && !muted) {
+        if (frames > 0 && squelchOpen) {
             emitAudio(track, frames)
         }
     }
@@ -749,7 +798,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen && !muted) {
+        if (frames > 0 && squelchOpen) {
             emitAudio(track, frames)
         }
     }
@@ -785,7 +834,7 @@ class SdrEngine private constructor(
             frames++
         }
         applySquelch(energy / kotlin.math.max(cnt, 1))
-        if (frames > 0 && squelchOpen && !muted) {
+        if (frames > 0 && squelchOpen) {
             emitAudio(track, frames)
         }
     }
@@ -859,6 +908,16 @@ class SdrEngine private constructor(
     }
 
     private val audioFrames = ShortArray(BLOCK / 4)  // WFM 最坏 16384/8=2048 帧 ×2
+
+    /**
+     * 静音时喂给 AudioTrack 的全零缓冲。
+     *
+     * 静音不停止写 AudioTrack（见 [emitAudio]）——停写会导致缓冲区欠载，
+     * 恢复声音的瞬间会放出一段过期的旧音频（爆音）。
+     *
+     * 内容永远是零，分配一次就够，不用每次填。
+     */
+    private val muteBuf = ShortArray(BLOCK / 4)
 }
 
 /** UI 桥：引擎 → UI 的单向推送（引擎线程调用） */

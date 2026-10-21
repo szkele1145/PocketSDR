@@ -169,6 +169,12 @@ class FmScanner(
             // 声音状态和界面上的静音开关对不上。
             val oldMuted = engine.muted
             engine.muted = true  // 扫描静音（防跳频爆音）
+            // 录音必须暂停：扫描要跳频、切模式、开静噪，
+            // 继续录的话录出来的是几十秒的扫频噪声和跳变——
+            // 而用户以为录的是他正在听的那个台。
+            // 扫描前录着就暂停，扫完恢复；本来就没录就不动。
+            val wasRecording = engine.isRecording && !engine.recordingPaused
+            if (wasRecording) engine.pauseRecording()
             try {
                 // 测量模式按波段选：FM 广播用窄带更准，航空对讲是 AM，
                 // 对讲机才是 NFM。以前写死 NFM，扫航空频段会一个台都搜不到。
@@ -271,6 +277,8 @@ class FmScanner(
                 engine.muted = oldMuted
                 engine.selectMode(oldMode)
                 engine.squelchDb = oldSquelch
+                // 扫描前在录就接着录（内容从扫描结束这一刻继续）
+                if (wasRecording) engine.resumeRecording()
                 engine.tuneWithinSpan(oldFreq)
                 onDone(results)
             }

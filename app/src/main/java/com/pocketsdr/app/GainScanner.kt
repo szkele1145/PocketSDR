@@ -110,6 +110,14 @@ class GainScanner(
         val oldManual = engine.hardwareManualGain
         val oldGain = engine.hardwareLnaGain
 
+        // 扫描期间静音 + 暂停录音：
+        // - 静音是因为增益会被一路推高，用户会听到越来越响最后过载的声音
+        // - 暂停录音是因为扫的是增益台阶，录下来是「呼吸声」而不是正常节目
+        val oldMuted = engine.muted
+        engine.muted = true
+        val wasRecording = engine.isRecording && !engine.recordingPaused
+        if (wasRecording) engine.pauseRecording()
+
         try {
             // 必须切到手动增益：自动增益下改单档毫无意义，AGC 会把它拉回去
             if (!engine.setHardwareGainMode(true)) {
@@ -183,6 +191,9 @@ class GainScanner(
                 engine.setHardwareLnaGain(oldGain)
             }
             engine.setHardwareGainMode(oldManual)
+            // 静音与录音恢复：与保存的偏好一一对应
+            engine.muted = oldMuted
+            if (wasRecording) engine.resumeRecording()
         }
     }
 

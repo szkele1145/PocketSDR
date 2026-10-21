@@ -37,8 +37,6 @@ class MainActivity : ComponentActivity(), UiBridge {
     /** 音频焦点：来电/导航播报时让出声音，结束后自动恢复 */
     private var audioManager: android.media.AudioManager? = null
     private var audioFocusRequest: Any? = null
-    /** 失去焦点前的静音状态（null = 当前没因焦点丢失而静音） */
-    private var mutedBeforeFocusLoss: Boolean? = null
 
     // Compose 状态
     private var spectrum by mutableStateOf(FloatArray(0))
@@ -216,23 +214,29 @@ class MainActivity : ComponentActivity(), UiBridge {
         }
     }
 
-    /** 音频焦点变化：丢了就静音，拿回来就恢复（不改用户自己设的静音状态） */
+    /**
+     * 音频焦点变化。
+     *
+     * 焦点丢了就让出声音（SdrEngine.setFocusMuted），**不动**用户的静音开关。
+     *
+     * 以前是直接改 engine.muted，有两个问题：
+     *
+     * 1. 界面会显示成「静音中」——用户以为是自己按了静音，去点那个按钮想取消，
+     *    点了也没用（让路是系统决定的）
+     * 2. 通话结束后为了恢复声音把 muted 改回 false，
+     *    顺手把用户自己设的静音也解除了
+     */
     private fun onFocusChange(change: Int) {
         val eng = engine ?: return
         when (change) {
             android.media.AudioManager.AUDIOFOCUS_LOSS,
             android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                // 记下用户原本是不是静音：如果他自己就是静音的，恢复时不该给他打开
-                if (mutedBeforeFocusLoss == null) mutedBeforeFocusLoss = eng.muted
-                eng.muted = true
-                SdrLog.i("APP", "音频焦点丢失，暂时静音")
+                eng.setFocusMuted(true)
+                SdrLog.i("APP", "音频焦点丢失，暂时让出声音")
             }
             android.media.AudioManager.AUDIOFOCUS_GAIN -> {
-                mutedBeforeFocusLoss?.let { was ->
-                    eng.muted = was
-                    SdrLog.i("APP", "音频焦点恢复，静音状态还原为 $was")
-                }
-                mutedBeforeFocusLoss = null
+                eng.setFocusMuted(false)
+                SdrLog.i("APP", "音频焦点恢复")
             }
             // LOSS_TRANSIENT_CAN_DUCK：别人只是要"压低"，我们没做压低，
             // 保持原音量即可（导航播报这种场景压太低反而听不见电台）
