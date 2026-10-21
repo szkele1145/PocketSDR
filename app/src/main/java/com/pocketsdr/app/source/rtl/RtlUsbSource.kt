@@ -53,6 +53,22 @@ class RtlUsbSource(
     private var tuner: Fc0013? = null
     private val tunerType: RtlTuner
 
+    /**
+     * 当前生效的 LNA 增益（tenths dB）。
+     *
+     * 以前只有「设置」没有「读取」——增益扫描要能恢复用户原来的那一档，
+     * 就必须知道它是什么。
+     *
+     * 声明必须放在 init 块之前：init 里要读硬件真实档位写进来，
+     * 而 Kotlin 的属性按声明顺序初始化，放在后面会报「初始化前使用」。
+     */
+    @Volatile var currentLnaGain: Int = 0
+        private set
+
+    /** 当前是否为手动增益模式 */
+    @Volatile var manualGainMode: Boolean = false
+        private set
+
     @Volatile override var centerFreq: Long = 98_000_000
         set(value) {
             field = value
@@ -104,7 +120,17 @@ class RtlUsbSource(
                 }
                 check(initOk) { "FC0013 初始化失败：${t.initDetail.ifEmpty { "未知原因" }}" }
                 tuner = t
-                SdrLog.i("FC0013", "初始化 OK")
+                // 读回硬件当前实际的增益档：增益扫描结束后要恢复它。
+                // 没有这一步就只能恢复一个假想的默认值（-99dB 最低档），
+                // 用户辛苦调好的增益会被悄悄弄丢。
+                rtl.setI2cRepeater(true)
+                val realGain = try {
+                    t.readLnaGain()
+                } finally {
+                    rtl.setI2cRepeater(false)
+                }
+                if (realGain != null) currentLnaGain = realGain
+                SdrLog.i("FC0013", "初始化 OK，当前增益档 ${realGain?.let { "${it / 10f}dB" } ?: "未知"}")
             }
             RtlTuner.R820T ->
                 throw UnsupportedOperationException("检测到 R820T 芯片，本版只适配 FC0013（可换用「直接采样」模式收 HF/短波）")
@@ -266,6 +292,9 @@ class RtlUsbSource(
                 // 以前失败是完全静默的：用户调了增益却不知道有没有生效
                 hwSettingFailures++
                 SdrLog.w("RTL", "LNA 增益设置失败 ($tenthsDb)")
+            } else {
+                // 硬件接受了才记录：增益扫描要靠它恢复用户原来那一档
+                currentLnaGain = tenthsDb
             }
             ok
         } catch (e: Exception) {
@@ -285,6 +314,9 @@ class RtlUsbSource(
             } finally {
                 rtl.setI2cRepeater(false)
             }
+            // 只在硬件真的接受了才更新记录：否则界面显示「手动」而硬件还在自动，
+            // 用户会以为增益控制坏了
+            if (ok) manualGainMode = manual
             if (!ok) {
                 hwSettingFailures++
                 SdrLog.w("RTL", "增益模式设置失败 ($manual)")

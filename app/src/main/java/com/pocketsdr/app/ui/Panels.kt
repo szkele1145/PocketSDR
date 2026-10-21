@@ -4,9 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -596,4 +599,168 @@ private fun wavDuration(f: File): String {
             } else ""
         }
     } catch (_: Exception) { "" }
+}
+
+/**
+ * 增益自动寻优对话框。
+ *
+ * 让用户不用再「一档一档推着听」——扫完全部档位，量出每档的噪声底与峰值，
+ * 挑出「不过载前提下信噪比最高」的那一档。
+ *
+ * 结果表要展示出来而不只是给一个结论：用户能看到「哪一档开始削顶」，
+ * 这在排查天线/前端故障时是有用信息，不是纯装饰。
+ */
+@Composable
+fun GainTuneDialog(
+    engine: SdrEngine,
+    onDismiss: () -> Unit,
+    onAdopt: (gainTenthDb: Int) -> Unit
+) {
+    var progress by remember { mutableStateOf(0) }
+    var total by remember { mutableStateOf(0) }
+    var running by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<com.pocketsdr.app.GainScanner.Result?>(null) }
+    var scanner by remember { mutableStateOf<com.pocketsdr.app.GainScanner?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            // 窗口关掉时必须停掉扫描线程：否则它会继续改增益，
+            // 用户已经离开这个设置项了，硬件却还在被扫。
+            scanner?.cancel()
+        }
+    }
+
+    fun startScan() {
+        result = null
+        note = null
+        progress = 0
+        total = engine.lnaGains.size
+        running = true
+        val s = com.pocketsdr.app.GainScanner(
+            engine,
+            onProgress = { done, tot ->
+                progress = done
+                total = tot
+            },
+            onDone = { r ->
+                result = r
+                running = false
+                if (r.failed) note = r.note
+            }
+        )
+        scanner = s
+        s.start()
+    }
+
+    AlertDialog(
+        onDismissRequest = {
+            scanner?.cancel()
+            onDismiss()
+        },
+        title = { Text("增益自动寻优") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (running) {
+                    Text("正在扫描 ${total} 个增益档…", fontSize = 13.sp)
+                    Spacer(Modifier.height(6.dp))
+                    if (total > 0) {
+                        LinearProgressIndicator(
+                            progress = { progress.toFloat() / total.toFloat() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("$progress / $total", fontSize = 11.sp, color = Color(0xFF8FA3B8),
+                        fontFamily = FontFamily.Monospace)
+                    Spacer(Modifier.height(6.dp))
+                    Text("扫描期间会短暂改变增益，听到的声音变化是正常的。",
+                        fontSize = 11.sp, color = Color(0xFF5A6B7F))
+                } else if (result == null) {
+                    Text("将逐档测量噪声底与谱峰，找出不过载前提下信噪比最高的增益档。",
+                        fontSize = 13.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text("大约需要 ${total.coerceAtLeast(engine.lnaGains.size)} 秒。",
+                        fontSize = 11.sp, color = Color(0xFF5A6B7F))
+                } else {
+                    val r = result!!
+                    note?.let {
+                        Text("⚠ $it", fontSize = 12.sp, color = Color(0xFFFF6B6B))
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    if (r.wasCancelled) {
+                        Text("已取消（扫了一部分，结果仅供参考）", fontSize = 12.sp,
+                            color = Color(0xFFF6D55C))
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    r.best?.let { b ->
+                        Surface(color = Color(0xFF12261E), shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text("推荐增益：%.1f dB".format(b.gainTenthDb / 10f),
+                                    fontSize = 15.sp, color = Color(0xFF00E5FF),
+                                    fontFamily = FontFamily.Monospace)
+                                Text("噪声底 %.0f dB · 峰值 %.0f dB · 信噪比 %.0f dB".format(
+                                    b.floorDb, b.peakDb, b.snrDb),
+                                    fontSize = 11.sp, color = Color(0xFF8FA3B8),
+                                    fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if (r.steps.isNotEmpty()) {
+                        Text("全部档位", fontSize = 12.sp, color = Color(0xFF5A6B7F))
+                        Spacer(Modifier.height(3.dp))
+                        r.steps.forEach { s ->
+                            val isBest = r.best?.gainTenthDb == s.gainTenthDb
+                            Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                                Text("%7.1f dB".format(s.gainTenthDb / 10f),
+                                    fontSize = 10.sp,
+                                    color = if (isBest) Color(0xFF00E5FF) else Color(0xFF8FA3B8),
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.width(66.dp))
+                                Text("噪 %5.0f 峰 %5.0f SNR %4.0f".format(s.floorDb, s.peakDb, s.snrDb),
+                                    fontSize = 10.sp,
+                                    color = when {
+                                        s.clipped -> Color(0xFFFF5252)
+                                        isBest -> Color(0xFF00E5FF)
+                                        else -> Color(0xFF8FA3B8)
+                                    },
+                                    fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                        if (r.steps.any { it.clipped }) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("红色 = 该档已削顶（峰值 ≥ -3dB），再往上只会更糟。",
+                                fontSize = 10.sp, color = Color(0xFFFF66B6B))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val r = result
+            if (running) {
+                TextButton(onClick = { scanner?.cancel() }) {
+                    Text("停止", color = Color(0xFFFF6B6B))
+                }
+            } else if (r?.best != null) {
+                TextButton(onClick = {
+                    onAdopt(r.best.gainTenthDb)
+                    onDismiss()
+                }) { Text("采用推荐") }
+            } else {
+                TextButton(onClick = { startScan() }) { Text("开始扫描") }
+            }
+        },
+        dismissButton = {
+            if (!running && result == null) {
+                TextButton(onClick = { startScan() }) { Text("开始扫描") }
+            } else if (!running) {
+                TextButton(onClick = { startScan() }) { Text("重新扫描") }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+        }
+    )
 }

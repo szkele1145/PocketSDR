@@ -220,6 +220,30 @@ class Fc0013(private val rtl: Rtl2832) {
         return true
     }
 
+    /**
+     * 读回当前 LNA 增益档（tenths dB）。
+     *
+     * 增益寄存器 0x14 的低 5 位就是档位码，高 3 位是别的控制位，
+     * 反查 [LNA_GAINS] 表即可还原出实际生效的档位。
+     *
+     * 用途：增益扫描结束后要恢复用户原来那一档。没有「读」就只能瞎猜一个
+     * （比如默认 0 = -99dB 最低档），那会把用户辛苦调好的增益弄丢。
+     *
+     * 读不到时返回 null——调用方应据此选择「不恢复具体档位」，
+     * 而不是恢复一个假的值。
+     */
+    fun readLnaGain(): Int? {
+        val t = readReg(0x14)
+        if (t < 0) return null
+        val code = t and 0x1F
+        for (i in 0 until GAIN_PAIRS) {
+            if ((LNA_GAINS[i * 2 + 1] and 0x1F) == code) {
+                return LNA_GAINS[i * 2]
+            }
+        }
+        return null
+    }
+
     /** 手动/自动增益模式 */
     fun setGainMode(manual: Boolean): Boolean {
         val t = readReg(0x0d)

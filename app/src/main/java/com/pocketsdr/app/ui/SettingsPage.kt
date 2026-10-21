@@ -47,6 +47,8 @@ fun SettingsPage(
     var showLog by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
     var showOnboarding by remember { mutableStateOf(false) }
+    // 增益自动寻优对话框
+    var showGainTune by remember { mutableStateOf(false) }
     // 自检报告是否已复制到剪贴板
     var copied by remember { mutableStateOf(false) }
     // 录音以 engine 为事实来源，与 RxPage 录音开关联动，不再维护孤立本地状态
@@ -220,6 +222,13 @@ fun SettingsPage(
                     Text("⚠ 增益设置未被硬件接受（档位只显示在界面上，实际没生效）——检查 USB 连接",
                         fontSize = 10.sp, color = Color(0xFFFF6B6B))
                 }
+                // 增益自动寻优：老手是「一档一档推着听」，这可以自动化。
+                // 扫完 24 档，量出每档噪声底与峰值，挑出不过载前提下 SNR 最高的那档。
+                OutlinedButton(
+                    onClick = { showGainTune = true },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("⚡ 增益自动寻优", fontSize = 12.sp) }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text("HF 直采", fontSize = 12.sp, color = Color(0xFF8FA3B8))
                     Switch(checked = hfDirect, onCheckedChange = {
@@ -424,6 +433,21 @@ fun SettingsPage(
         onDismiss = { showScan = false })
     if (showLog) LogDialog { showLog = false }
     if (showRecordings) RecordingsDialog { showRecordings = false }
+    if (showGainTune) {
+        GainTuneDialog(
+            engine = engine,
+            onDismiss = { showGainTune = false },
+            onAdopt = { gain ->
+                // 采用推荐档：切到手动增益并落到那一档，同时写回 store，
+                // 下次连上硬件还是这个值。
+                store.hwManualGain = true
+                engine.setHardwareGainMode(true)
+                engine.setHardwareLnaGain(gain)
+                val idx = engine.lnaGains.indexOfFirst { it == gain }
+                if (idx >= 0) store.hwGainIndex = idx
+            }
+        )
+    }
 }
 
 /**

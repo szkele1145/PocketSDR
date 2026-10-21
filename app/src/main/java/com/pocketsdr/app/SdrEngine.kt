@@ -49,6 +49,19 @@ class SdrEngine private constructor(
         return src.setGainMode(manual)
     }
 
+    /**
+     * 当前生效的 LNA 增益（tenths dB），仿真源返回 0。
+     *
+     * 增益扫描要能恢复用户原来的那一档，就必须有「读」的能力——
+     * 以前只有「设」，没有「读」。
+     */
+    val hardwareLnaGain: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.currentLnaGain ?: 0
+
+    /** 当前是否为手动增益模式（仿真源恒为 false） */
+    val hardwareManualGain: Boolean
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.manualGainMode ?: false
+
     /** 硬件直接采样模式（0=关 1=I-ADC 2=Q-ADC），HF 短波用 */
     fun setHardwareDirectSampling(mode: Int): Boolean {
         val src = source as? com.pocketsdr.app.source.rtl.RtlUsbSource ?: return false
