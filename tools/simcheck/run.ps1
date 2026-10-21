@@ -55,7 +55,16 @@ $srcs = @(
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\source\RdsEncoder.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\source\IQSource.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Fft.kt"),
-    (Join-Path $Repo "tools\simcheck\Main.kt")
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\FirFilter.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\ComplexDecimator.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Biquad.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Demodulators.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\HilbertFir.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\AudioAgc.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\TrigLut.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\RdsDecoder.kt"),
+    (Join-Path $Repo "tools\simcheck\Main.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\SelfCheck.kt")
 )
 
 $cp = (@($compiler, $stdlib) + $extra) -join ";"
@@ -65,6 +74,7 @@ Write-Host "compiling..."
 & "$($cfg.javaHome)\bin\java.exe" -cp $cp org.jetbrains.kotlin.cli.jvm.K2JVMCompiler @args
 if ($LASTEXITCODE -ne 0) { throw "kotlinc failed ($LASTEXITCODE)" }
 
-Write-Host "running..."
+Write-Host ""
+Write-Host "=== DSP self-check + simulation gain model ==="
 & "$($cfg.javaHome)\bin\java.exe" -cp "$out;$stdlib" MainKt
 exit $LASTEXITCODE

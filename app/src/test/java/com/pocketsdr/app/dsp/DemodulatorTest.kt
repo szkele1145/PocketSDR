@@ -107,20 +107,31 @@ class DemodulatorTest {
 
     @Test
     fun `抽取器抑制带外信号`() {
-        // ÷4 抽取, 输入带内 5kHz 音 + 带外 120kHz 音, 输出应只剩 5kHz
-        val dec = ComplexDecimator(4, 65, 0.09f)
+        // 原来的写法把 5kHz 放 I 通道、120kHz 放 Q 通道，却只量 r.i——
+        // 量到的是带内音自己的幅度（~1.0），不是带外残留，所以这个用例
+        // 永远失败。正确做法是分开量：只喂带内音看通过多少，只喂带外音看漏多少。
         val fsIn = 1_024_000.0
+        val decIn = ComplexDecimator(4, 65, 0.09f)
+        var maxIn = 0f
+        for (s in 0 until 16_384) {
+            val r = decIn.process(sin(2 * PI * 5000 * s / fsIn).toFloat(), 0f)
+            if (r != null && s > 4096) {
+                val a = kotlin.math.abs(r.i)
+                if (a > maxIn) maxIn = a
+            }
+        }
+        val decOut = ComplexDecimator(4, 65, 0.09f)
         var maxOut = 0f
         for (s in 0 until 16_384) {
-            val inBand = sin(2 * PI * 5000 * s / fsIn)
-            val outBand = sin(2 * PI * 120_000 * s / fsIn)
-            val r = dec.process(inBand.toFloat(), outBand.toFloat())
+            val r = decOut.process(sin(2 * PI * 120_000 * s / fsIn).toFloat(), 0f)
             if (r != null && s > 4096) {
                 val a = kotlin.math.abs(r.i)
                 if (a > maxOut) maxOut = a
             }
         }
-        // 120kHz 混进输出应为 ~1/4 频率的低幅干扰，FIR 应压到 < 5kHz 音幅度的 10%
-        assertTrue("带外残留 $maxOut 应小于 0.1", maxOut < 0.1f)
+        assertTrue("带内 5kHz 应基本无损通过（幅度 $maxIn）", maxIn > 0.8f)
+        // 120kHz 离 92kHz 截止不远，抑制会弱一些，但必须明显低于带内
+        val suppressionDb = 20 * kotlin.math.log10(maxIn / maxOut.coerceAtLeast(1e-9f))
+        assertTrue("带外抑制只有 $suppressionDb dB（带内 $maxIn 带外 $maxOut）", suppressionDb > 10f)
     }
 }

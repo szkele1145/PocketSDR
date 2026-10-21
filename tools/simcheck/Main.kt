@@ -1,4 +1,5 @@
 import com.pocketsdr.app.dsp.Fft
+import com.pocketsdr.app.dsp.SelfCheck
 import com.pocketsdr.app.source.SimulatedSource
 import java.util.Arrays
 import kotlin.math.abs
@@ -13,10 +14,26 @@ import kotlin.math.log10
  *   - updateNoiseFloor：64 个等间隔 bin、排序后 25% 分位作底噪、最大值作峰值
  *
  * GainScanner 的判据就建立在这两个数上：
- *   - SNR = peak - floor，推荐 = 不过载前提下的最高 SNR
- *   - 削顶 = peak >= -3 dBFS
+ *   - SNR = peak - floor，推荐 =不过载前提下的最高 SNR
+ *   - 过载 = 谱峰贴满量程，或 SNR 比 best 回落 3dB 以上（v2.75.0 起）
+ *
+ * DSP 链路的 6 项自检（FFT/抽取器/FM解调/SSB/立体声/AGC）与 App 内
+ * 「🩺 DSP 自检」按钮共用 [SelfCheck]，这里只是把它在桌面上跑一遍。
  */
 fun main() {
+    // ---- 1) DSP 自检（与 App 内按钮同一份代码） ----
+    println("=== DSP self-check (same code as the in-app button) ===")
+    val report = SelfCheck.runAll { done, total -> }
+    var failed = 0
+    for (it in report.items) {
+        if (it.passed) println("PASS  ${it.name}  ${it.detail}")
+        else { failed++; println("FAIL  ${it.name}  ${it.detail}  <- ${it.reason}") }
+    }
+    println(if (failed == 0) "== DSP: all ${report.items.size} checks passed ==" else "== DSP: $failed failed ==")
+
+    // ---- 2) 增益模型验证 ----
+    println()
+    println("=== simulation gain model ===")
     val src = SimulatedSource(98_100_000, 1_024_000f)
     val fftSize = 1024
     val fft = Fft(fftSize)
@@ -96,5 +113,13 @@ fun main() {
     src.setLnaGain(-99); repeat(2) { src.read(buf, 4096) }; val p1 = power()
     src.setLnaGain(197); repeat(2) { src.read(buf, 4096) }; val p2 = power()
     val ratioDb = 10 * log10(p2 / p1)
-    println("低档功率=%.6f 高档功率=%.6f 差=%.2f dB（|差|<1 才算通过）%s".format(p1, p2, ratioDb, if (abs(ratioDb) < 1.0) " PASS" else " FAIL"))
+    val autoOk = abs(ratioDb) < 1.0
+    println("低档功率=%.6f 高档功率=%.6f 差=%.2f dB（|差|<1 才算通过）%s".format(p1, p2, ratioDb, if (autoOk) " PASS" else " FAIL"))
+
+    // 汇总退出码：DSP 自检失败数 + 增益模型两个断言
+    val gainFail = (if (recommendedMidBand) 0 else 1) + (if (autoOk) 0 else 1)
+    val totalFail = failed + gainFail
+    println()
+    println(if (totalFail == 0) "== ALL PASS ==" else "== $totalFail FAILED ==")
+    kotlin.system.exitProcess(if (totalFail == 0) 0 else 1)
 }

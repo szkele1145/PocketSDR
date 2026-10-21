@@ -51,6 +51,10 @@ fun SettingsPage(
     var showGainTune by remember { mutableStateOf(false) }
     // 自检报告是否已复制到剪贴板
     var copied by remember { mutableStateOf(false) }
+    // DSP 数学自检：跑一遍合成信号的 DSP 链路自检，和硬件无关
+    var selfCheckRunning by remember { mutableStateOf(false) }
+    var selfCheckReport by remember { mutableStateOf<com.pocketsdr.app.dsp.SelfCheck.Report?>(null) }
+    var showSelfCheck by remember { mutableStateOf(false) }
     // 录音以 engine 为事实来源，与 RxPage 录音开关联动，不再维护孤立本地状态
     val recording = engine.isRecording
     var scanProgress by remember { mutableStateOf(-1) }
@@ -394,6 +398,43 @@ fun SettingsPage(
             UsbDiagCard(engine, usbErrorFull)
         }
 
+        // ===== DSP 自检（和硬件无关，纯软件数学）=====
+        // 听到杂音/串台/没声音时，先跑这个：全 PASS 说明软件侧没问题，
+        // 问题在天线/供电/USB/硬件；有 FAIL 则直接指出是哪一环坏了。
+        GroupCard("DSP 自检") {
+            OutlinedButton(
+                onClick = {
+                    if (selfCheckRunning) return@OutlinedButton
+                    selfCheckRunning = true
+                    selfCheckReport = null
+                    showSelfCheck = true
+                    // 立体声那项要跑 1 秒仿真（25.6 万次迭代），
+                    // 放 UI 线程会卡住界面，必须开后台线程。
+                    Thread {
+                        val r = com.pocketsdr.app.dsp.SelfCheck.runAll()
+                        // 回到主线程更新界面
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            selfCheckReport = r
+                            selfCheckRunning = false
+                        }
+                    }.apply { isDaemon = true }.start()
+                },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (selfCheckRunning) Color(0xFF5A6B7F) else Color(0xFF7DF3FF)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (selfCheckRunning) "⏳ 正在检测…" else "🩺 开始自检",
+                    fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "用已知的合成信号跑一遍 DSP 链路的每一环（FFT 定位、抽取器抑制、" +
+                    "FM 解调增益、SSB 镜像抑制、立体声分离、音频增益控制），" +
+                    "每项给出通过与否和实测数字。约 2 秒，不影响接收。",
+                fontSize = 10.sp, color = Color(0xFF5A6B7F)
+            )
+        }
+
         // ===== 关于 =====
         GroupCard("关于") {
             Text("PocketSDR · RTL-SDR 横屏收音机", fontSize = 12.sp, color = Color(0xFF8FA3B8))
@@ -466,6 +507,78 @@ fun SettingsPage(
             }
         )
     }
+    if (showSelfCheck) {
+        SelfCheckDialog(
+            running = selfCheckRunning,
+            report = selfCheckReport,
+            onDismiss = { showSelfCheck = false }
+        )
+    }
+}
+
+/**
+ * DSP 自检结果对话框。
+ *
+ * 每项一行：✓/✗ + 项目名 + 实测数字；失败项额外给出原因。
+ * 全部通过时顶部给一句结论——「软件侧没问题，去查天线/供电/USB」。
+ */
+@Composable
+private fun SelfCheckDialog(
+    running: Boolean,
+    report: com.pocketsdr.app.dsp.SelfCheck.Report?,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) { Text("关闭", fontSize = 12.sp) }
+        },
+        title = { Text("🩺 DSP 自检", fontSize = 15.sp) },
+        text = {
+            Column {
+                if (running) {
+                    Text("正在跑合成信号…（立体声那项要 1 秒仿真）",
+                        fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                } else if (report == null) {
+                    Text("还没有结果", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                } else {
+                    Text(
+                        if (report.allPassed)
+                            "✅ ${report.passedCount}/${report.items.size} 项通过。\n" +
+                                "软件侧的 DSP 链路是好的。听到的杂音/串台/没声音，" +
+                                "问题在天线、供电、USB 连接或硬件本身。"
+                        else
+                            "❌ ${report.items.size - report.passedCount}/${report.items.size} 项未通过。\n" +
+                                "软件侧确实有问题，下面标出了是哪一环。",
+                        fontSize = 11.sp,
+                        color = if (report.allPassed) Color(0xFF7DF3FF) else Color(0xFFFF7961)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    report.items.forEach { it ->
+                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text(
+                                if (it.passed) "✓" else "✗",
+                                fontSize = 12.sp,
+                                color = if (it.passed) Color(0xFF7DF3FF) else Color(0xFFFF5252),
+                                modifier = Modifier.width(16.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    it.name,
+                                    fontSize = 12.sp,
+                                    color = if (it.passed) Color(0xFFD0DAE4) else Color(0xFFFF7961)
+                                )
+                                Text(it.detail, fontSize = 10.sp, color = Color(0xFF8FA3B8))
+                                if (it.reason != null) {
+                                    Text(it.reason, fontSize = 10.sp, color = Color(0xFFFF7961))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
 }
 
 /**
