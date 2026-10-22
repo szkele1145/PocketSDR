@@ -41,7 +41,19 @@ class RdsEncoder(private val stationName: String) {
         pushWord(crc10(0x1234) xor OFFSETS[0], 10)
 
         // 块 B：group 0A (type=0000, version=0) + TP=0 + PTY=1(新闻) + 段地址
-        val bB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or (segment and 0x3)
+        //
+        // **B 块位布局（IEC 62106 Table 9）**：
+        //   bit 15-12 : group type
+        //   bit 11    : B0
+        //   bit 10    : A0
+        //   bit 9-5   : PTY (5 bits)
+        //   bit 4-2   : Segment Address (3 bits)   ← 段地址在这里
+        //   bit 1-0   : C1, C0 (交通信息标志，非 TP 组恒为 0)
+        //
+        // 之前段地址写在了 bit 1-0 —— 那是 C1/C0 标志位！编码器和解码器
+        // 当时"自洽"，仿真能过，但真机上 C1/C0 恒为 0，所有段的段地址都会
+        // 被读成 0，台名只能显示前 2 个字符。这是典型的「仿真通过、真机失败」。
+        val bB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or ((segment and 0x7) shl 2)
         pushWord(bB, 16)
         pushWord(crc10(bB) xor OFFSETS[1], 10)
 

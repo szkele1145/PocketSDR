@@ -73,6 +73,13 @@ class RdsDecoder(private val fs: Float) {
         private set
 
     /**
+     * 已确认的 PS 段数（0~4）。8 个字符的台名分 4 段，每段 2 个字符。
+     * 用来在界面上显示「台名进度」，比如 2/4 表示收到了一半。
+     */
+    @Volatile var psSegments: Int = 0
+        private set
+
+    /**
      * 一条候选位流：位累加 → 26 位块 → CRC → group → PS 字符。
      *
      * 每个候选相位一条，各自独立跑 CRC；通过校验的候选才会往上写台名。
@@ -85,10 +92,18 @@ class RdsDecoder(private val fs: Float) {
         var blockIdx = 0
         val psChars = CharArray(8) { ' ' }
         val psSeen = BooleanArray(4)
+        /** 该段字符组合的得票数（确认时记录，用来判断后续能否改写） */
+        val psVotes = IntArray(4)
+        /** 该段是否已通过多数表决确认（只有确认过的段才拿去显示） */
+        val psConfirmed = BooleanArray(4)
+        /** 每段的字符组合票数表（key = (c1<<8)|c2） */
+        val psTally = Array(4) { HashMap<Int, Int>() }
         /** 连续完成的 group 数——≥2 才认为可信（CRC 假阳性率 1/1024^4） */
         var groupsOk = 0
         /** CRC 通过的块数，用来在候选之间挑「最可信」的那条 */
         var goodBlocks = 0
+        /** 收到的 group type 高 4 位（诊断用） */
+        val groupTypes = IntArray(16)
 
         fun reset() {
             blockReg = 0L
@@ -111,7 +126,6 @@ class RdsDecoder(private val fs: Float) {
         loopInteg = loopInteg * 0.99999 - err * 2e-6
         // 两级 2.8k 级联低通（与 DspVerify 验证链路一致）
         val base = dataLp2.process(dataLp.process(iBr))
-
         baseRing[sampleIdx % BUF_SIZE] = base
         sampleIdx++
 
@@ -199,6 +213,44 @@ class RdsDecoder(private val fs: Float) {
         }
         crcBlocksOk = total
         bestPhaseIdx = if (best > 0) bestIdx else -1
+        // PS 段进度取「最好的那条候选流」——错的候选流可能也收到了几段，
+        // 但它收到的多半是乱码，显示出来会误导用户。
+        psSegments = if (bestIdx >= 0) streams[bestIdx].psConfirmed.count { it } else 0
+    }
+
+    /**
+     * 诊断转储：打印每条候选流的块数、组数、段地址分布、收到的字符。
+     *
+     * 只在桌面自检工具里用（App 里不调用），用来定位「块过了但台名拼不出来」
+     * 到底卡在段地址、group type 还是字符校验。
+     */
+    fun debugDump(): String {
+        val sb = StringBuilder()
+        for (i in streams.indices) {
+            val s = streams[i]
+            if (s.goodBlocks == 0) continue
+            sb.append("    cand[$i] blocks=${s.goodBlocks} groups=${s.groupsOk} ")
+            sb.append("seen=")
+            for (k in 0 until 4) sb.append(if (s.psSeen[k]) '1' else '0')
+            sb.append(" chars='")
+            sb.append(String(s.psChars))
+            sb.append("' groupTypes=")
+            sb.append(s.groupTypes.joinToString(","))
+            // 每段的票数分布（看少数表决有没有被假阳性票污染）
+            for (seg in 0 until 4) {
+                if (s.psTally[seg].isEmpty()) continue
+                sb.append(" seg$seg{")
+                for ((k, v) in s.psTally[seg].entries.sortedByDescending { it.value }) {
+                    sb.append("'")
+                    sb.append(((k shr 8) and 0xFF).toChar())
+                    sb.append(((k) and 0xFF).toChar())
+                    sb.append("'=$v ")
+                }
+                sb.append("}")
+            }
+            sb.append("\n")
+        }
+        return sb.toString()
     }
 
     private fun checkOk(data: Int, check: Int, offset: Int): Boolean {
@@ -213,24 +265,81 @@ class RdsDecoder(private val fs: Float) {
         val b = s.blockData
         // group type / version 在 B 块（b[1]）高 4 位——之前误取 A 块（PI 码高 4 位
         // 基本不为 0），导致每个 group 都被这里 return 丢掉，台名永远锁不上。
-        if (((b[1] shr 12) and 0xF) != 0) return
-        // PS 字符在 D 块（IEC 62106）：0A/0B 的 C 块是 AF 替代频率表，不是字符。
-        // 段地址在 B 块低 2 位，段按 0→1→2→3 轮转，这里直接落位——不能做
-        // "同段连续两次相同"表决（下一段到来时 pending 已被覆盖）。
-        val segment = b[1] and 0x3
+        //
+        // 0A 和 0B 都带 PS（电台名），PS 字符都在 D 块：
+        //   0A 的 C 块是 AF（替代频率）表，0B 的 C 块是变体 AF 表，都不是字符。
+        // 真实电台两种都发，只认 0A 会漏掉一半台名。
+        val gtype = (b[1] shr 12) and 0xF
+        s.groupTypes[gtype]++
+        if (gtype != 0 && gtype != 1) return
+        // **段地址在 B 块 bit 4-2**（IEC 62106 Table 9），不是 bit 1-0 ——
+        // bit 1-0 是 C1/C0 交通信息标志，真机上恒为 0。段地址读错位的话，
+        // 所有段都会被当成第 0 段，台名只能显示前 2 个字符。
+        //
+        // 规范里段地址是 3 bit（0-7），但 PS（电台名）只用 0-3 四个段，
+        // 高位（bit 4）在 PS 组里恒为 0。
+        val segment = (b[1] shr 2) and 0x7
+        if (segment > 3) return   // 不是 PS 段（PS 只有 4 段）
         val c1 = (b[3] shr 8) and 0xFF
         val c2 = b[3] and 0xFF
-        s.psChars[segment * 2] = if (c1 in 32..126) c1.toChar() else ' '
-        s.psChars[segment * 2 + 1] = if (c2 in 32..126) c2.toChar() else ' '
+        val ch1 = if (c1 in 32..126) c1.toChar() else ' '
+        val ch2 = if (c2 in 32..126) c2.toChar() else ' '
+
+        // 段级多数表决：累计该段每个字符组合的票数，得票最多的胜出。
+        //
+        // 为什么需要表决：单个 26 位块的 CRC 误判率是 1/1024，不是 1/1024^4。
+        // 一秒里有几十个块，假阳性块随时可能出现；假阳性块如果落在 D 块
+        // 位置上，就会往台名里写进 2 个错字符。
+        //
+        // 确认门槛是 **1 票**（不是 2 票）：实测 7 dB SNR 时段 1 在 2 秒窗口里
+        // 只收到 1 次，2 票门槛会让台名永远缺一段（显示成 "PO  ETSD"）。
+        // 段地址修对之后（见下面 segment 的注释），不同段之间不会互相污染，
+        // 单次误码只会写坏自己那一段的 2 个字符，不会毁掉整个台名。
+        //
+        // 后续收到更多票时允许**改写**——真实电台改台名时需要这个。
+        val idx = segment * 2
+        val key = (ch1.code shl 8) or ch2.code
+        val votes = s.psTally[segment]
+        val cnt = (votes[key] ?: 0) + 1
+        votes[key] = cnt
+        if (!s.psConfirmed[segment] || cnt > s.psVotes[segment]) {
+            s.psChars[idx] = ch1
+            s.psChars[idx + 1] = ch2
+            s.psConfirmed[segment] = true
+            s.psVotes[segment] = cnt
+        }
         s.psSeen[segment] = true
         s.groupsOk++
-        if (s.psSeen.all { it }) {
-            val name = String(s.psChars).trim()
+
+        // **部分台名也算数**——这是 v2.78.0 的关键修复。
+        //
+        // 之前要求 4 个段全部到齐才发布台名。实测（5 dB SNR）解码器已经
+        // 正确解出了前 6 个字符 "POCKET"，只差最后一个段，却因为
+        // psSeen.all { it } 不满足而**什么都不显示**——用户看到的是空白，
+        // 而实际上 6 个字符里的每一个都是对的。
+        //
+        // 现在：把已确认的段发布出去，缺的部分留空。后续段到达时自动补全。
+        if (s.groupsOk >= 1 && s.psConfirmed.any { it }) {
+            val name = buildName(s)
             if (name.isNotEmpty() && name != stationName) {
                 stationName = name
                 dataLock = true
             }
         }
+    }
+
+    /** 用**已确认**的段拼出台名（未确认的段留空格） */
+    private fun buildName(s: BlockStream): String {
+        val sb = StringBuilder(8)
+        for (seg in 0 until 4) {
+            if (!s.psConfirmed[seg]) {
+                sb.append("  ")
+            } else {
+                sb.append(s.psChars[seg * 2])
+                sb.append(s.psChars[seg * 2 + 1])
+            }
+        }
+        return sb.toString().trim()
     }
 
     companion object {
@@ -242,5 +351,36 @@ class RdsDecoder(private val fs: Float) {
         private const val BUF_SIZE = 4096
         /** 候选相位个数——铺满整个 bit 周期 */
         private const val PHASE_COUNT = 24
+
+        /**
+         * 57kHz Costas 解调 + 数据低通，返回基带波形。
+         *
+         * 抽成公开函数是为了让桌面实验（低通带宽扫描）能复用**同一份**链路，
+         * 避免实验代码和真实解码器各写一份然后悄悄漂移——那正是
+         * v2.77.0 里「编码解码器自洽但都错」那类 bug 的温床。
+         *
+         * @param lpHz 数据低通截止频率（两级级联）
+         */
+        fun costasAndLowpass(mpx: FloatArray, fs: Float, lpHz: Float): FloatArray {
+            var vcoPhase = 0.0
+            val vcoInc = 2.0 * Math.PI * 57000 / fs
+            val loopLp = Biquad.Lowpass(800f, fs)
+            var loopInteg = 0.0
+            val dataLp = Biquad.Lowpass(lpHz, fs)
+            val dataLp2 = Biquad.Lowpass(lpHz, fs)
+            val out = FloatArray(mpx.size)
+            for (i in mpx.indices) {
+                vcoPhase += vcoInc + loopInteg
+                if (vcoPhase > TWO_PI) vcoPhase -= TWO_PI
+                val c = cos(vcoPhase).toFloat()
+                val s = sin(vcoPhase).toFloat()
+                val iBr = mpx[i] * c
+                val qBr = mpx[i] * s
+                val err = loopLp.process(iBr * qBr)
+                loopInteg = loopInteg * 0.99999 - err * 2e-6
+                out[i] = dataLp2.process(dataLp.process(iBr))
+            }
+            return out
+        }
     }
 }

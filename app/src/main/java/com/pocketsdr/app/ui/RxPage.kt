@@ -62,6 +62,10 @@ fun RxPage(
     rdsLocked: Boolean = false,
     /** 通过 CRC 的 RDS 块数——用来区分「这台没发 RDS」和「正在读台名」 */
     rdsCrcOk: Int = 0,
+    /** 已确认的 PS 段数（0~4），用来显示台名进度 */
+    rdsSegments: Int = 0,
+    /** 最佳判决相位（-1 = 未锁定） */
+    rdsBestPhase: Int = -1,
     /** 插着 USB 设备但没连上时的提示条 */
     usbPending: String? = null,
     /** 提示条上的「去连接」→ 跳设置页 USB 诊断 */
@@ -96,6 +100,8 @@ fun RxPage(
     var focusMuted by remember { mutableStateOf(engine.focusMuted) }
     var showFreqInput by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
+    /** RDS 诊断面板：点左上角的 RDS 指示器展开 */
+    var showRdsDiag by remember { mutableStateOf(false) }
     var showRecordings by remember { mutableStateOf(false) }
     // 搜台：核心操作，不该只藏在设置页里（主界面状态提示会引导用户去搜台，
     // 那个按钮必须在主界面才点得到）
@@ -292,6 +298,10 @@ fun RxPage(
                 modifier = Modifier.fillMaxSize()
             )
             // RDS 电台名（锁定后左上角）+ 立体声/单声道指示
+            //
+            // 可点击：展开 RDS 诊断面板。台名读不出来时，用户需要知道
+            // 是「这台没发 RDS」还是「信号太弱」还是「解码链路有问题」——
+            // 光看「未收到 RDS」这一行字没法区分。
             if (mode == SdrEngine.Mode.WFM) {
                 val label = when {
                     rdsName.isNotEmpty() -> "📻 $rdsName"
@@ -301,10 +311,15 @@ fun RxPage(
                 }
                 Surface(
                     color = Color(0xCC101826), shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .clickable { showRdsDiag = true }
                 ) {
                     Text(
-                        label + if (stereoLock > 0.5f) " ·ST" else " ·单声道",
+                        // 注意括号：Kotlin 里 if/else 的优先级低于 +，
+                        // 不加括号的话 "ⓘ" 只会出现在单声道分支里。
+                        label + (if (stereoLock > 0.5f) " ·ST" else " ·单声道") + " ⓘ",
                         color = when {
                             rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
                             rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
@@ -685,6 +700,16 @@ fun RxPage(
             }
             if (showRecordings) {
                 RecordingsDialog(onDismiss = { showRecordings = false })
+            }
+            if (showRdsDiag) {
+                RdsDiagDialog(
+                    name = rdsName.trim(),
+                    crcOk = rdsCrcOk,
+                    segments = rdsSegments,
+                    bestPhase = rdsBestPhase,
+                    signalDb = signalDb,
+                    onDismiss = { showRdsDiag = false }
+                )
             }
             if (showScan) {
                 ScanDialog(

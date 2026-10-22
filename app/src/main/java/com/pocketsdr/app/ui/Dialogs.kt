@@ -369,3 +369,64 @@ fun FavoritesDialog(
         )
     }
 }
+
+/**
+ * RDS 诊断面板。
+ *
+ * 台名读不出来时，用户光看「未收到 RDS」这一行字没法判断问题在哪：
+ * 是这台电台根本没发 RDS？是信号太弱？还是解码链路坏了？
+ *
+ * 这里把解码器内部的状态摊开：
+ *  - 台名进度（收到 4 段中的几段）
+ *  - 通过 CRC 的块数（>0 说明链路是通的）
+ *  - 最佳判决相位（-1 说明还没锁定）
+ *  - 信号强度与信噪比的定性判断
+ */
+@Composable
+fun RdsDiagDialog(
+    name: String,
+    crcOk: Int,
+    segments: Int,
+    bestPhase: Int,
+    signalDb: Float,
+    onDismiss: () -> Unit
+) {
+    // 台名进度条：4 段，每段 2 个字符
+    val segText = buildString {
+        for (i in 0 until 4) append(if (i < segments) "■" else "□")
+    }
+    val verdict = when {
+        name.isNotEmpty() -> "已锁定台名「$name」"
+        crcOk == 0 -> "没收到可校验的 RDS 块——多半这台电台没发 RDS，或信号太弱"
+        segments == 0 -> "RDS 块能校验通过，但没解出字符——可能段地址或字符位有问题"
+        else -> "已解出部分台名（$segments/4 段），信号偏弱，还在等剩下的段"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("RDS 诊断") },
+        text = {
+            Column {
+                Text(verdict, fontSize = 13.sp, color = Color(0xFF9FB4CC))
+                Spacer(Modifier.height(10.dp))
+                Text("台名进度  $segText  ($segments/4 段)", fontSize = 12.sp)
+                Text("CRC 通过块数  $crcOk", fontSize = 12.sp)
+                Text(
+                    "判决相位  " + if (bestPhase >= 0) "第 $bestPhase 号候选已锁定" else "未锁定",
+                    fontSize = 12.sp
+                )
+                Text(
+                    "信号  " + "%.1f".format(signalDb) + " dB" +
+                        if (signalDb > -60) "（够强）" else "（偏弱，RDS 可能读不出）",
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "RDS 台名字段最长 8 个字符，分 4 段发送，每段重复若干遍后才确认——" +
+                        "弱信号下先显示已确认的部分。",
+                    fontSize = 11.sp, color = Color(0xFF5A6B7F)
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}

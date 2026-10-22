@@ -52,6 +52,10 @@ fun AppShell(
     rdsLocked: Boolean = false,
     /** 通过 CRC 的 RDS 块数 */
     rdsCrcOk: Int = 0,
+    /** 已确认的 PS 段数（0~4） */
+    rdsSegments: Int = 0,
+    /** 最佳判决相位（-1 = 未锁定） */
+    rdsBestPhase: Int = -1,
     /** 插着设备但未连接的提示（null = 无提示） */
     usbPending: String? = null,
     /** 最近一次硬件连接失败的完整原因（横幅上截断了，完整版在 USB 诊断页显示） */
@@ -81,6 +85,8 @@ fun AppShell(
                         rdsName = rdsName,
                         rdsLocked = rdsLocked,
                         rdsCrcOk = rdsCrcOk,
+                        rdsSegments = rdsSegments,
+                        rdsBestPhase = rdsBestPhase,
                         usbPending = usbPending,
                         // 提示条上的「去连接」：直接切到设置页的 USB 诊断
                         onOpenUsbDiag = { usbDiagFocus = true; page = 1 }

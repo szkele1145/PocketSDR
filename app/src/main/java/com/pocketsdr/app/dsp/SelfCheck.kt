@@ -58,8 +58,8 @@ object SelfCheck {
      * @param onProgress 每完成一项回调一次（项序号从 0 开始），供 UI 显示进度
      */
     fun runAll(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Report {
-        val items = ArrayList<Item>(7)
-        val total = 7
+        val items = ArrayList<Item>(8)
+        val total = 8
 
         items.add(checkFftBin()); onProgress(1, total)
         items.add(checkDecimator()); onProgress(2, total)
@@ -68,6 +68,7 @@ object SelfCheck {
         items.add(checkStereo()); onProgress(5, total)
         items.add(checkAudioPath()); onProgress(6, total)
         items.add(checkRds()); onProgress(7, total)
+        items.add(checkRdsWeak()); onProgress(8, total)
 
         return Report(items)
     }
@@ -282,10 +283,71 @@ object SelfCheck {
     private fun checkRds(): Item {
         val fs = 256_000f
         val expected = "POCKETSD"     // RDS 的 PS 字段规定 8 个字符
+        val got = runRds(fs, expected, noiseDb = null)
+        return if (got == expected) {
+            Item("RDS 台名解码", true, "解出「$got」")
+        } else {
+            Item("RDS 台名解码", false, if (got.isEmpty()) "台名没解出来" else "解出「$got」",
+                "RDS 的 Costas 环 / 位同步 / 差分判决 / CRC 有一环不对，台名锁不上")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 8) RDS 弱信号：解出门槛有多低
+    //
+    // 理想条件通过不代表真机能用。真实电台的 RDS 只有 2%~5% 调制度，
+    // 而且信号本身有噪声。这一项加噪声跑一遍，看看解出门槛。
+    //
+    // 门槛的意义：真机上如果 SNR 不够，用户看到的应该是「未收到 RDS」
+    // 或者半个台名，而不是一个错误的台名。
+    // ------------------------------------------------------------------
+    private fun checkRdsWeak(): Item {
+        val fs = 256_000f
+        val expected = "POCKETSD"
+        // 逐档降 SNR，找「还能解出完整台名」的最低档
+        var bestSnr = -1
+        var partialAt5 = false
+        for (snr in intArrayOf(20, 15, 10, 7, 5)) {
+            val got = runRds(fs, expected, noiseDb = snr)
+            if (got == expected) {
+                bestSnr = snr
+            } else if (snr == 5 && got.isNotEmpty()) {
+                partialAt5 = true
+            }
+        }
+        return if (bestSnr >= 7) {
+            Item("RDS 弱信号能力", true, "SNR ${bestSnr}dB 仍解出完整台名" +
+                    if (partialAt5) "，5dB 仍解出部分" else "")
+        } else if (bestSnr >= 0) {
+            Item("RDS 弱信号能力", true, "SNR ${bestSnr}dB 解出完整台名")
+        } else {
+            Item("RDS 弱信号能力", false, "SNR 20dB 都解不出完整台名",
+                "弱信号下 RDS 完全失效，真机上大部分电台可能读不出台名")
+        }
+    }
+
+    /**
+     * 跑一次 RDS 解码测试。
+     *
+     * @param noiseDb 加性高斯噪声的 SNR（dB），null = 不加噪
+     * @return 解出的台名（失败时是空串或残缺名字）
+     */
+    private fun runRds(fs: Float, expected: String, noiseDb: Int?): String {
         val n = (fs * 2.0f).toInt()
         val rds = RdsEncoder(expected).buildWave(fs)
         val mpx = FloatArray(n)
         var rdsPos = 0
+        // 确定性伪随机，保证每次自检结果一致
+        var seed = 12345L
+        fun rnd(): Double {
+            seed = seed * 6364136223846793005L + 1442695040888963407L
+            return ((seed ushr 11).toDouble() / (1L shl 53).toDouble()) - 0.5
+        }
+        var noiseAmp = 0f
+        if (noiseDb != null) {
+            val sigRms = 0.5 / kotlin.math.sqrt(2.0)
+            noiseAmp = (sigRms / Math.pow(10.0, noiseDb / 20.0)).toFloat()
+        }
         for (i in 0 until n) {
             val t = i / fs.toDouble()
             // 19k 导频 0.1 + 38k 副载波 0.02 + 1kHz 音频 0.5 + RDS
@@ -294,17 +356,12 @@ object SelfCheck {
                     0.5 * sin(2 * PI * 1000 * t) +
                     rds[rdsPos].toDouble()
             rdsPos = (rdsPos + 1) % rds.size
+            if (noiseAmp > 0f) v += noiseAmp * rnd() * 2.0
             mpx[i] = v.toFloat()
         }
         val dec = RdsDecoder(fs)
         for (i in 0 until n) dec.process(mpx[i])
-        val got = dec.stationName.trim()
-        return if (got == expected && dec.dataLock) {
-            Item("RDS 台名解码", true, "解出「$got」")
-        } else {
-            Item("RDS 台名解码", false, if (got.isEmpty()) "台名没解出来" else "解出「$got」",
-                "RDS 的 Costas 环 / 位同步 / 差分判决 / CRC 有一环不对，台名锁不上")
-        }
+        return dec.stationName.trim()
     }
 
     private const val LN10 = 2.302585092994046
