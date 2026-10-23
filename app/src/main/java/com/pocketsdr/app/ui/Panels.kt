@@ -1,5 +1,7 @@
 package com.pocketsdr.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +28,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -512,11 +516,17 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                     modifier = Modifier.height(20.dp)
                                 )
                             }
-                            Column(Modifier.weight(1f)) {
-                                // 原始文件名长这样：sdr_20261021_023015_98300kHz.wav
-                                // 直接甩给用户等于让人自己数数字。解析成
-                                // 「98.300 MHz · 10-21 02:30」才是人能读的东西。
-                                val nic = niceRecordingLabel(f)
+                            val nic = niceRecordingLabel(f)
+                            var showMenu by remember { mutableStateOf(false) }
+                            @OptIn(ExperimentalFoundationApi::class)
+                            Column(
+                                Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onClick = {},
+                                        onLongClick = { showMenu = true }
+                                    )
+                            ) {
                                 Text(nic.title, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
                                     color = if (isPlaying) Color(0xFFF6D55C) else Color(0xFFD0DAE4),
                                     maxLines = 1)
@@ -524,6 +534,27 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                     "${nic.sub}  " + wavDuration(f) + "  %.1fMB".format(f.length() / 1e6),
                                     fontSize = 10.sp, color = Color(0xFF5A6B7F)
                                 )
+                            }
+                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                DropdownMenuItem(text = { Text("复制文件名") }, onClick = {
+                                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    cm.setPrimaryClip(android.content.ClipData.newPlainText("pocketsdr", f.name))
+                                    recNote = "已复制：${f.name}"
+                                    showMenu = false
+                                })
+                                DropdownMenuItem(text = { Text("在文件管理器中查看") }, onClick = {
+                                    try {
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", f)
+                                        intent.setDataAndType(uri, "audio/wav")
+                                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        context.startActivity(android.content.Intent.createChooser(intent, "查看"))
+                                    } catch (e: Exception) {
+                                        recNote = "无法打开：${e.message?.takeIf { it.isNotBlank() } ?: "不支持"}"
+                                    }
+                                    showMenu = false
+                                })
+                                DropdownMenuItem(text = { Text("取消") }, onClick = { showMenu = false })
                             }
                             IconButton(onClick = {
                                 recNote = null
@@ -534,6 +565,8 @@ fun RecordingsDialog(onDismiss: () -> Unit) {
                                         android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                                             type = "audio/x-wav"
                                             putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, nic.title)
+                                            putExtra(android.content.Intent.EXTRA_TEXT, "${nic.title} · ${nic.sub}")
                                             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }, "分享录音"))
                                 } catch (e: Exception) {
