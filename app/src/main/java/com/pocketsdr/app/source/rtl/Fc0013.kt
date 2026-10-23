@@ -125,74 +125,18 @@ class Fc0013(private val rtl: Rtl2832) {
             if (!writeReg(0x14, (t and 0x1F) or 0x20)) return false
         }
 
-        // 分频比选择
-        var multi = 96; var reg5 = 0x82; var reg6 = 0x00
-        if (freq < 37_084_000L) { multi = 96; reg5 = 0x82; reg6 = 0x00 }
-        else if (freq < 55_625_000L) { multi = 64; reg5 = 0x02; reg6 = 0x02 }
-        else if (freq < 74_167_000L) { multi = 48; reg5 = 0x42; reg6 = 0x00 }
-        else if (freq < 111_250_000L) { multi = 32; reg5 = 0x82; reg6 = 0x02 }
-        else if (freq < 148_334_000L) { multi = 24; reg5 = 0x22; reg6 = 0x00 }
-        else if (freq < 222_500_000L) { multi = 16; reg5 = 0x42; reg6 = 0x02 }
-        else if (freq < 296_667_000L) { multi = 12; reg5 = 0x12; reg6 = 0x00 }
-        else if (freq < 445_000_000L) { multi = 8; reg5 = 0x22; reg6 = 0x02 }
-        else if (freq < 593_334_000L) { multi = 6; reg5 = 0x0a; reg6 = 0x00 }
-        else if (freq < 950_000_000L) { multi = 4; reg5 = 0x12; reg6 = 0x02 }
-        else { multi = 2; reg5 = 0x0a; reg6 = 0x02 }
-
-        val fVco = freq * multi
-
-        if (fVco >= 3_060_000_000L) {
-            reg6 = reg6 or 0x08
-        }
-
-        // XDIV
-        var xdiv = (fVco / xtalHalf).toInt()
-        if (fVco - xdiv * xtalHalf >= xtalHalf / 2) xdiv++
-
-        var pm = xdiv / 8
-        var am = xdiv - 8 * pm
-        if (am < 2) { am += 8; pm-- }
-
-        val reg1: Int; val reg2: Int
-        if (pm > 31) {
-            reg1 = am + 8 * (pm - 31)
-            reg2 = 31
-        } else {
-            reg1 = am
-            reg2 = pm
-        }
-        if (reg1 > 15 || reg2 < 0x0B) return false  // 无效 PLL 组合
-
-        reg6 = reg6 or 0x20  // fix clock out
-
-        // XIN（Delta Sigma 小数部分）
-        var xin = (((fVco - (fVco / xtalHalf) * xtalHalf) / 1000) shl 15) / (xtalHalf / 1000)
-        if (xin >= 16384) xin += 32768
-        val reg3 = xin shr 8
-        val reg4 = xin and 0xFF
-
-        // 带宽位
-        reg6 = reg6 and 0x3F
-        when (bandwidth) {
-            6_000_000L -> reg6 = reg6 or 0x80
-            7_000_000L -> reg6 = reg6 or 0x40
-            else -> {}
-        }
-
-        reg5 = reg5 or 0x07  // modified for Realtek demod
-
-        // 写 PLL 寄存器
-        if (!writeReg(1, reg1)) return false
-        if (!writeReg(2, reg2)) return false
-        if (!writeReg(3, reg3.toInt())) return false
-        if (!writeReg(4, reg4.toInt())) return false
-        if (!writeReg(5, reg5)) return false
-        if (!writeReg(6, reg6)) return false
-
+        // PLL / 分频寄存器：算式抽到 Fc0013Pll（纯函数，桌面可离线验证）
+        val pll = Fc0013Pll.compute(freq, rtl.rtlXtal, bandwidth) ?: return false
+        if (!writeReg(1, pll.r1)) return false
+        if (!writeReg(2, pll.r2)) return false
+        if (!writeReg(3, pll.r3)) return false
+        if (!writeReg(4, pll.r4)) return false
+        if (!writeReg(5, pll.r5)) return false
+        if (!writeReg(6, pll.r6)) return false
         // multi==64 时开 LNA 电源
         val tmp = readReg(0x11)
         if (tmp < 0) return false
-        val r = if (multi == 64) tmp or 0x04 else tmp and 0xFB
+        val r = if (pll.multi == 64) tmp or 0x04 else tmp and 0xFB
         if (!writeReg(0x11, r)) return false
 
         // VCO 校准
@@ -204,15 +148,15 @@ class Fc0013(private val rtl: Rtl2832) {
 
         // VCO 选择修正
         val vcoSel = (vco and 0x3F)
-        if (fVco >= 3_060_000_000L) {
+        if (pll.vcoSelect) {
             if (vcoSel > 0x3C) {
-                if (!writeReg(0x06, reg6 and 0x08.inv())) return false
+                if (!writeReg(0x06, pll.r6 and 0x08.inv())) return false
                 if (!writeReg(0x0e, 0x80)) return false
                 if (!writeReg(0x0e, 0x00)) return false
             }
         } else {
             if (vcoSel < 0x02) {
-                if (!writeReg(0x06, reg6 or 0x08)) return false
+                if (!writeReg(0x06, pll.r6 or 0x08)) return false
                 if (!writeReg(0x0e, 0x80)) return false
                 if (!writeReg(0x0e, 0x00)) return false
             }

@@ -37,6 +37,8 @@ $srcs = @(
     (Join-Path $Repo "tools\simcheck\RdsSpecCheck.kt"),
     (Join-Path $Repo "tools\simcheck\LpBandwidth.kt"),
     (Join-Path $Repo "tools\simcheck\RdsSwitch.kt"),
+    (Join-Path $Repo "tools\simcheck\Fc0013PllCheck.kt"),
+    (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\source\rtl\Fc0013Pll.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\SelfCheck.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Biquad.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Fft.kt"),
@@ -62,6 +64,10 @@ $fail = 0
 
 Write-Host "=== DSP self-check + simulation gain model ==="
 & "$($cfg.javaHome)\bin\java.exe" -cp "$out;$stdlib" MainKt
+if ($LASTEXITCODE -ne 0) { $fail = 1 }
+
+Write-Host "=== FC0013 PLL register cross-check ==="
+& "$($cfg.javaHome)\bin\java.exe" -cp "$out;$stdlib" Fc0013PllCheckKt
 if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 Write-Host "=== RDS spec cross-check ==="
