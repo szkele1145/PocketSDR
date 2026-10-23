@@ -570,7 +570,9 @@ private fun listWavFiles(context: android.content.Context): List<File> {
  */
 private data class RecLabel(val title: String, val sub: String)
 
-private val RecNameRe = Regex("""sdr_(\d{8})_(\d{6})_(\d+)kHz\.wav""")
+// 文件名：sdr_<日期>_<时间>_<频率>kHz[_<台名>].wav
+// 台名段是可选的（老录音没有；没收到 RDS 时也不会有）
+private val RecNameRe = Regex("""sdr_(\d{8})_(\d{6})_(\d+)kHz(?:_([^.]+))?\.wav""")
 
 private fun niceRecordingLabel(f: File): RecLabel {
     val m = RecNameRe.find(f.name)
@@ -580,7 +582,13 @@ private fun niceRecordingLabel(f: File): RecLabel {
     val freqHz = m.groupValues[3].toLongOrNull()?.times(1000L)
     val date = m.groupValues[1]   // yyyyMMdd
     val time = m.groupValues[2]   // HHmmss
-    val title = if (freqHz != null) formatFreq(freqHz) else f.name
+    // 台名段（可选）：有就接在频率后面，回听时一眼认得出是哪个台
+    val station = m.groupValues.getOrNull(4)?.replace('_', ' ')?.trim().orEmpty()
+    val title = when {
+        freqHz != null && station.isNotEmpty() -> formatFreq(freqHz) + " · " + station
+        freqHz != null -> formatFreq(freqHz)
+        else -> f.name
+    }
     // 文件名里的日期时间本来就是格式化好的数字串，直接切片，
     // 不用再 parse 成 Date（parse 还会受时区影响，纯属绕路）
     val sub = try {

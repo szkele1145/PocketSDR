@@ -40,15 +40,21 @@ class WavRecorder(private val context: Context) {
     private val buf = java.io.ByteArrayOutputStream(1 shl 16)
     private val ioLock = Any()   // DSP 写 与 UI 停止/启动 的互斥
 
-    /** 开始录音（新建带时间戳的文件） */
-    fun start(sr: Int, freqHz: Long): Boolean = synchronized(ioLock) {
+    /**
+     * 开始录音（新建带时间戳的文件）。
+     *
+     * @param stationName RDS 解出的台名；非空时写进文件名，回听时一眼能认出是哪个台
+     */
+    fun start(sr: Int, freqHz: Long, stationName: String = ""): Boolean = synchronized(ioLock) {
         if (recording) return true
         try {
             sampleRate = sr
             val dir = File(context.getExternalFilesDir(null), "recordings")
             dir.mkdirs()
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val f = File(dir, "sdr_${ts}_${freqHz / 1000}kHz.wav")
+            val tag = safeNameTag(stationName)
+            val base = "sdr_${ts}_${freqHz / 1000}kHz"
+            val f = File(dir, if (tag.isEmpty()) "$base.wav" else "${base}_$tag.wav")
             raf = RandomAccessFile(f, "rw").also {
                 it.setLength(0)
                 it.write(ByteArray(44))  // WAV 头占位
@@ -172,4 +178,25 @@ class WavRecorder(private val context: Context) {
             a[off + 1] = ((v shr 8) and 0xFF).toByte()
         }
     }
+}
+
+/**
+ * 把 RDS 台名清洗成可安全放进文件名的片段。
+ *
+ * 真实台名里会出现空格、斜杠、冒号、问号（「News/Talk」「Rock 96.5: The Edge」），
+ * 这些字符在文件名里非法或会让分享出去的文件名变形，一律换成下划线。
+ * 保留中文/字母/数字，长度截到 20（文件名过长在某些文件管理器里显示不全）。
+ */
+private fun safeNameTag(raw: String): String {
+    val sb = StringBuilder()
+    for (ch in raw.trim()) {
+        when {
+            ch.isLetterOrDigit() -> sb.append(ch)
+            ch == ' ' || ch == '_' || ch == '-' || ch == '.' -> sb.append('_')
+            else -> sb.append('_')
+        }
+        if (sb.length >= 20) break
+    }
+    // 连续下划线压成一个，再去掉首尾下划线
+    return sb.toString().replace(Regex("_+"), "_").trim('_')
 }

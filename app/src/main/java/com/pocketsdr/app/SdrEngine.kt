@@ -327,7 +327,8 @@ class SdrEngine private constructor(
     fun startRecording(context: android.content.Context): Boolean {
         val r = recorder ?: WavRecorder(context).also { recorder = it }
         recordingError = null
-        val ok = r.start(audioRate, _tunedFreq)
+        // 把 RDS 台名带进文件名：录音列表里光有频率，回听时分不清是哪个台
+        val ok = r.start(audioRate, _tunedFreq, rds?.stationName ?: "")
         if (!ok) recordingError = r.lastError ?: "无法开始录音（存储不可用）"
         return ok
     }
