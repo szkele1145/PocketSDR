@@ -31,6 +31,9 @@ class FmScanner(
      * @param refined 是否经过频率精化。UI 用它标注「这个频率是细扫出来的」，
      *   免得用户以为还是原来的网格值。
      */
+    /** 本次扫描用的测量模式（refine 读台名时切到 WFM，读完要切回它） */
+    private var measureModeForRefine: SdrEngine.Mode = SdrEngine.Mode.NFM
+
     data class Station(
         val freq: Long,
         val levelDb: Float,
@@ -55,6 +58,13 @@ class FmScanner(
          * 回头调谐一遍便宜得多。
          */
         private const val NAME_DWELL_MS = 1600
+        /**
+         * 切模式后等 DSP 线程真正换过去 + RDS 重新锁定。
+         *
+         * selectMode 只是入队，真正切换发生在 DSP 线程块头，块大小 ~50ms；
+         * 再加上滤波器/鉴频器重建，留 180ms 比较稳。
+         */
+        private const val MODE_SWITCH_SETTLE_MS = 180L
     }
 
     /** 本次扫描实际使用的阈值与噪声底（UI 可显示，便于真机判断灵敏度） */
@@ -153,6 +163,27 @@ class FmScanner(
         // 带上台名之后一眼就能挑。
         var stationName = ""
         if (!cancelled) {
+            // **RDS 只在 WFM 下解码**（解码器接在调频鉴频输出上），
+            // 而扫描期间引擎是测量模式（FM 用 NFM 测电平更准）。
+            // 不切过来的话，engine.rds.stationName 永远是空的——读台名
+            // 会静默地一直失败，而且看不出原因。
+            engine.selectMode(SdrEngine.Mode.WFM)
+            try {
+                Thread.sleep(MODE_SWITCH_SETTLE_MS)
+            } catch (_: InterruptedException) {
+                cancelled = true
+            }
+            // **必须先调回最佳频点**。细扫循环结束时引擎停在 hi
+            // （gridFreq + step/2，FM 上是偏 50kHz），在那儿读 RDS 等于
+            // 在邻频上等台名——白白等满 1.6 秒还读不到。
+            if (bestF != gridFreq) {
+                engine.tuneWithinSpan(bestF)
+                try {
+                    Thread.sleep(REFINE_SETTLE_MS)
+                } catch (_: InterruptedException) {
+                    cancelled = true
+                }
+            }
             var waited = 0
             while (waited < NAME_DWELL_MS && !cancelled) {
                 try {
@@ -171,6 +202,14 @@ class FmScanner(
             }
             if (stationName.isNotEmpty()) {
                 SdrLog.i("SCAN", "读电台名 ${bestF / 1000}kHz → $stationName")
+            }
+            if (!cancelled) {
+                engine.selectMode(measureModeForRefine)
+                try {
+                    Thread.sleep(MODE_SWITCH_SETTLE_MS)
+                } catch (_: InterruptedException) {
+                    cancelled = true
+                }
             }
         }
         // 必须回到网格点：精化把引擎停在了 bestF，而粗扫的游标还在等下一个网格点。
@@ -224,6 +263,7 @@ class FmScanner(
                 // 测量模式按波段选：FM 广播用窄带更准，航空对讲是 AM，
                 // 对讲机才是 NFM。以前写死 NFM，扫航空频段会一个台都搜不到。
                 engine.selectMode(measureMode)
+                measureModeForRefine = measureMode
                 // 模式切换是异步的（DSP 线程块头应用），不等待的话第一个
                 // 测到的能量还是旧模式的，读数没有意义。
                 Thread.sleep(150)

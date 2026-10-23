@@ -176,6 +176,60 @@ class RdsDecoder(private val fs: Float) {
             blockIdx = 0
             blockData[0] = 0; blockData[1] = 0; blockData[2] = 0; blockData[3] = 0
         }
+
+        /**
+         * 清空**内容**（台名 / 滚动文本 / PTY / PI），保留位同步状态。
+         *
+         * 换台时必须调：否则上一個台的台名会一直挂着，等新台凑齐 4 段才被
+         * 覆盖；更糟的是两个台的段会混着投票，拼出一个不存在的「混合台名」。
+         */
+        fun resetContent() {
+            java.util.Arrays.fill(psChars, ' ')
+            java.util.Arrays.fill(psConfirmed, false)
+            java.util.Arrays.fill(psSeen, false)
+            java.util.Arrays.fill(psVotes, 0)
+            for (m in psTally) m.clear()
+            java.util.Arrays.fill(rtChars, ' ')
+            java.util.Arrays.fill(rtSeen, false)
+            java.util.Arrays.fill(rtVotes, 0)
+            for (m in rtTally) m.clear()
+            rtSegments = 0
+            rtAbFlag = -1
+            piCode = -1
+            piCandidate = -1
+            lastPty = -1
+            groupsOk = 0
+            java.util.Arrays.fill(groupTypes, 0)
+        }
+    }
+
+    /**
+     * 清空全部 RDS 状态。
+     *
+     * **换台时必须调用**。否则：
+     *  - 上一个台的台名会一直挂在界面上，直到新台凑齐 4 段才被覆盖（1~2 秒
+     *    的错误信息）；
+     *  - 更糟的是两个台的段会混在同一个投票表里，可能拼出一个**不存在的
+     *    混合台名**——用户会以为收到了一个奇怪的台。
+     *
+     * 扫描读台名时尤其关键：每个频点都要从零开始等，不能拿上一个台的结果。
+     */
+    fun resetAll() {
+        stationName = ""
+        radioText = ""
+        pty = -1
+        piCode = -1
+        groupTypesSummary = ""
+        crcBlocksOk = 0
+        bestPhaseIdx = -1
+        psSegments = 0
+        rtSegments = 0
+        dataLock = false
+        for (s in streams) {
+            s.reset()
+            s.resetContent()
+        }
+        java.util.Arrays.fill(prevDecisionAt, -1)
     }
 
     fun process(mpx: Float) {

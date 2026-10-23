@@ -552,6 +552,10 @@ class SdrEngine private constructor(
         if (c != null && t != null) {
             _centerFreq = c
             _tunedFreq = t
+            // 换台必须清 RDS 状态：台名/滚动文本/PI 都是**上一个台**的，
+            // 不清的话界面会挂着旧台名，而且两个台的段会混着投票，
+            // 可能拼出不存在的「混合台名」。
+            rds.resetAll()
             // 调谐在 DSP 线程做（与 bulk 读天然串行，I2C 写不与读竞争）
             // 硬件调谐可能失败（I2C 抖动/供电不足）。source.centerFreq 是属性
             // 赋值，拿不到成功与否——只能比较源的失败计数在前后是否增长。
