@@ -396,7 +396,8 @@ fun RdsDiagDialog(
     rtSegments: Int = 0,
     pty: Int = -1,
     rdsTa: Boolean = false,
-    rdsTp: Boolean = false
+    rdsTp: Boolean = false,
+    afList: List<Int> = emptyList()
 ) {
     // 台名进度条：4 段，每段 2 个字符
     val segText = buildString {
@@ -434,6 +435,14 @@ fun RdsDiagDialog(
                 }
                 if (rdsTa) {
                     Text("⚠ 交通公告（TA）", fontSize = 12.sp, color = Color(0xFFFF5252))
+                }
+                if (afList.isNotEmpty()) {
+                    // AF（替代频率）：这个电台在其他频段的转发频率。
+                    // 显示成 MHz 列表，最多 8 个（真实台一般 2~6 个）。
+                    val afText = afList.take(8).joinToString("  ") {
+                        "%.1f".format(it / 1000f) + "M"
+                    }
+                    Text("替代频率  $afText", fontSize = 12.sp, color = Color(0xFF7DF3FF))
                 }
                 Text("CRC 通过块数  $crcOk", fontSize = 12.sp)
                 Text(

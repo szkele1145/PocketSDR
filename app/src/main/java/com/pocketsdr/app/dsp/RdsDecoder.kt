@@ -112,6 +112,9 @@ class RdsDecoder(private val fs: Float) {
         private set
     @Volatile var trafficAnnouncement: Boolean = false
         private set
+    /** AF 表（替代频率，单位 kHz） */
+    @Volatile var afFrequenciesKhz: List<Int> = emptyList()
+        private set
 
     /**
      * 收到的组类型分布，形如 `0A×12 2A×8`。
@@ -166,6 +169,10 @@ class RdsDecoder(private val fs: Float) {
         var piCandidate = -1
         /** 最近一次收到的 PTY（B 块 bit 9-5），-1 = 还没收到 */
         var lastPty = -1
+        /** AF 表：group 0A 的 C 块按序出现的有效频率（kHz），去重后有序 */
+        val afList = LinkedHashSet<Int>()
+        /** AF 编码方式（0 = VHF 表，1 = LF/MF 表），由 FILLIN 码决定 */
+        var afLfMf = false
         var tp = false
         var ta = false
         /** 连续完成的 group 数——≥2 才认为可信（CRC 假阳性率 1/1024^4） */
@@ -206,6 +213,8 @@ class RdsDecoder(private val fs: Float) {
             lastPty = -1
             tp = false
             ta = false
+            afList.clear()
+            afLfMf = false
             groupsOk = 0
             java.util.Arrays.fill(groupTypes, 0)
         }
@@ -229,6 +238,7 @@ class RdsDecoder(private val fs: Float) {
         piCode = -1
         trafficProgram = false
         trafficAnnouncement = false
+        afFrequenciesKhz = emptyList()
         groupTypesSummary = ""
         crcBlocksOk = 0
         bestPhaseIdx = -1
@@ -361,6 +371,9 @@ class RdsDecoder(private val fs: Float) {
             if (bestStream.piCode >= 0) piCode = bestStream.piCode
             trafficProgram = bestStream.tp
             trafficAnnouncement = bestStream.ta
+            if (bestStream.afList.isNotEmpty()) {
+                afFrequenciesKhz = bestStream.afList.toList()
+            }
             // 组类型分布（只列真的收到过的，按类型号排序，最多列 6 种）
             val sb = StringBuilder()
             var listed = 0
@@ -451,6 +464,13 @@ class RdsDecoder(private val fs: Float) {
         }
 
         if (gtype != 0 && gtype != 1) return
+
+        // group 0A 的 C 块是 AF（替代频率）表——0B 的 C 块是变体 PS，不解析。
+        // B 块 bit 15-12 是组类型，bit 11 是版本（0=A 型，1=B 型）。
+        val isVersionA = ((b[1] shr 11) and 1) == 0
+        if (gtype == 0 && isVersionA) {
+            decodeAf(s, b[2])
+        }
         // **PS 段地址在 B 块 bit 1-0**（IEC 62106 §3.1.5.3 Block 2）。
         //
         // 这里返工过两次：最早写 bit 1-0（对的），v2.78.0 误信二手资料
@@ -519,6 +539,38 @@ class RdsDecoder(private val fs: Float) {
             if (name.isNotEmpty() && name != stationName) {
                 stationName = name
                 dataLock = true
+            }
+        }
+    }
+
+    /**
+     * 解替代频率表（group 0A 的 C 块）。
+     *
+     * ## 位布局（IEC 62106 §3.1.5.3 / Annex D）
+     *
+     * 0A 组的 C 块装 **2 个 AF 码**（高字节在前）。每个码的含义：
+     * - `1..204`  → VHF 频率：**87.5 MHz + 码 × 100 kHz**（即 87500 + code*100 kHz）
+     * - `225..249` → 后面跟的 AF 个数 = 码 − 224（1..25）
+     * - `250`     → 接下来的码是 LF/MF 频率（编码方式不同）
+     * - `0`       → 空位，跳过
+     * - 其余      → 保留/填充，跳过
+     *
+     * LF/MF（码 250 之后）的换算与 VHF 不同，实现里按规范单独处理；
+     * 本项目主要面向 FM 广播，遇到 LF/MF 只记标志、不做换算，避免显示错频率。
+     */
+    private fun decodeAf(s: BlockStream, cBlock: Int) {
+        val bytes = intArrayOf((cBlock shr 8) and 0xFF, cBlock and 0xFF)
+        for (code in bytes) {
+            when {
+                code == 0 -> { /* 空位 */ }
+                code in 225..249 -> { /* AF 个数声明，不需要存 */ }
+                code == 250 -> s.afLfMf = true
+                code in 1..204 -> {
+                    // 87.5 MHz + code × 100 kHz
+                    val khz = 87_500 + code * 100
+                    s.afList.add(khz)
+                }
+                else -> { /* 205..224 保留，忽略 */ }
             }
         }
     }
