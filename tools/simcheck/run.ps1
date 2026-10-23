@@ -36,6 +36,7 @@ $srcs = @(
     (Join-Path $Repo "tools\simcheck\RdsRobust.kt"),
     (Join-Path $Repo "tools\simcheck\RdsSpecCheck.kt"),
     (Join-Path $Repo "tools\simcheck\LpBandwidth.kt"),
+    (Join-Path $Repo "tools\simcheck\RdsSwitch.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\SelfCheck.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Biquad.kt"),
     (Join-Path $Repo "app\src\main\java\com\pocketsdr\app\dsp\Fft.kt"),
@@ -69,6 +70,10 @@ if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 Write-Host "=== RDS robustness scan ==="
 & "$($cfg.javaHome)\bin\java.exe" -cp "$out;$stdlib" RdsRobustKt
+if ($LASTEXITCODE -ne 0) { $fail = 1 }
+
+Write-Host "=== RDS station-switch contamination check ==="
+& "$($cfg.javaHome)\bin\java.exe" -cp "$out;$stdlib" RdsSwitchKt
 if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 Write-Host "=== RDS data-lowpass bandwidth experiment (info only) ==="

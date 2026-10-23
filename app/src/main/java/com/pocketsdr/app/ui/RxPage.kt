@@ -316,6 +316,11 @@ fun RxPage(
                 val rdsTextS = rdsText.trim()
                 val label = when {
                     rdsName.isNotEmpty() -> "📻 $rdsName"
+                    // 台名还没凑齐时把 PI 码显示出来：PI 出现了就说明
+                    // 「载波锁定 → 位同步 → 块校验」这条链路已经通了，
+                    // 只是还在等 4 个段。真机上这是判断「有救没救」的关键，
+                    // 不然只能干看着「凑台名中」不知道卡在哪。
+                    rdsPi >= 0 -> "📻 已锁·PI " + "%04X".format(rdsPi) + "·凑台名中"
                     rdsLocked -> "📻 RDS 同步·读台名中"
                     rdsCrcOk > 0 -> "📻 RDS 已锁定·凑台名中"
                     else -> "📻 未收到 RDS"
