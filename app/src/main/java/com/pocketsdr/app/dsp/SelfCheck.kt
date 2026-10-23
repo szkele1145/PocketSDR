@@ -58,8 +58,8 @@ object SelfCheck {
      * @param onProgress 每完成一项回调一次（项序号从 0 开始），供 UI 显示进度
      */
     fun runAll(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Report {
-        val items = ArrayList<Item>(8)
-        val total = 8
+        val items = ArrayList<Item>(9)
+        val total = 9
 
         items.add(checkFftBin()); onProgress(1, total)
         items.add(checkDecimator()); onProgress(2, total)
@@ -69,6 +69,7 @@ object SelfCheck {
         items.add(checkAudioPath()); onProgress(6, total)
         items.add(checkRds()); onProgress(7, total)
         items.add(checkRdsWeak()); onProgress(8, total)
+        items.add(checkRdsText()); onProgress(9, total)
 
         return Report(items)
     }
@@ -302,6 +303,50 @@ object SelfCheck {
     // 门槛的意义：真机上如果 SNR 不够，用户看到的应该是「未收到 RDS」
     // 或者半个台名，而不是一个错误的台名。
     // ------------------------------------------------------------------
+    /**
+     * 第 9 项：RDS 滚动文本（RadioText）与节目类型（PTY）。
+     *
+     * 台名只有 8 个字符，而且很多电台台名是缩写；真机上判断「RDS 到底通没通」
+     * 更可靠的证据是滚动文本——它是最长 64 个字符、分 16 段发的实时信息。
+     *
+     * 这一项和「台名解码」分开，是因为两者用的组不同、位布局也不同
+     * （台名在 0 组，段地址在 B 块 bit 1-0；滚动文本在 2 组，段地址在
+     * B 块 bit 3-0，字符横跨 C/D 两块）。台名对了、文本错了，是完全可能的。
+     */
+    private fun checkRdsText(): Item {
+        val fs = 256_000f
+        val name = "POCKETSD"
+        val rt = "HELLO FROM POCKETSDR"
+        val n = (fs * 4.0f).toInt()
+        val rds = RdsEncoder(name, rt).buildWave(fs, 8)
+        val mpx = FloatArray(n)
+        var rdsPos = 0
+        for (i in 0 until n) {
+            val t = i / fs.toDouble()
+            var v = 0.1 * cos(2 * PI * 19000 * t) +
+                    0.02 * cos(2 * PI * 38000 * t) +
+                    0.5 * sin(2 * PI * 1000 * t)
+            if (rdsPos < rds.size) v += rds[rdsPos].toDouble()
+            rdsPos++
+            mpx[i] = v.toFloat()
+        }
+        val dec = RdsDecoder(fs)
+        for (i in 0 until n) dec.process(mpx[i])
+        val gotRt = dec.radioText.trim()
+        val gotPty = dec.pty
+        val okRt = gotRt == rt
+        val okPty = gotPty == 1
+        return if (okRt && okPty) {
+            Item("RDS 滚动文本 / 节目类型", true, "解出「$gotRt」，PTY=$gotPty")
+        } else {
+            Item("RDS 滚动文本 / 节目类型", false,
+                "文本「$gotRt」PTY=$gotPty（期望文本「$rt」PTY=1）",
+                if (!okRt) "滚动文本解错或解不出：2 组（2A）的段地址在 B 块 bit 3-0，" +
+                        "字符在 C/D 两块各 2 个"
+                else "节目类型解错：PTY 在 B 块 bit 9-5")
+        }
+    }
+
     private fun checkRdsWeak(): Item {
         val fs = 256_000f
         val expected = "POCKETSD"

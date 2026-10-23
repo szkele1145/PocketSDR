@@ -54,12 +54,38 @@ function Invoke-Gh {
     $resp = ""
     $tries = [Math]::Max(1, $EmptyRetries + 1)
     for ($i = 1; $i -le $tries; $i++) {
-        $resp = (& curl.exe @a) | Out-String
-        if ($resp.Length -ge 10) { break }
-        if ($i -lt $tries) {
-            Write-Host "    empty GitHub response (try $i), retrying"
-            Start-Sleep -Seconds 3
+        # curl.exe can fail to even LAUNCH ("Access is denied"), typically while
+        # the blob loop is spawning dozens of processes in a row. With
+        # $ErrorActionPreference = "Stop" that becomes a terminating error and
+        # kills the whole publish - it did exactly that twice (v2.82.0 and
+        # v2.84.0), leaving main half-updated. Treat a launch failure like an
+        # empty response and back off instead of aborting.
+        $launchFailed = $false
+        try {
+            $resp = (& curl.exe @a) | Out-String
+        } catch {
+            $launchFailed = $true
+            $resp = ""
         }
+        # With -OutFile, curl writes the body to a file and stdout stays empty
+        # by design - success is "the file exists", not "stdout has content".
+        $gotIt = if ($OutFile) { Test-Path $OutFile } else { $resp.Length -ge 10 }
+        if ($gotIt) { break }
+        if ($i -lt $tries) {
+            if ($launchFailed) {
+                Write-Host "    curl launch failed (try $i): $($_.Exception.Message)"
+                Start-Sleep -Seconds (2 * $i)
+            } else {
+                Write-Host "    empty GitHub response (try $i), retrying"
+                Start-Sleep -Seconds 3
+            }
+        }
+    }
+    if (-not $OutFile -and $resp.Length -eq 0) {
+        throw "curl.exe could not run (Access is denied) or GitHub returned nothing for: $Url"
+    }
+    if ($OutFile -and -not (Test-Path $OutFile)) {
+        throw "curl.exe produced no output file for: $Url"
     }
     return $resp
 }
