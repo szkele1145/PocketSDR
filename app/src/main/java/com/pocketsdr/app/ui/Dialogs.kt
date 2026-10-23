@@ -418,7 +418,7 @@ fun RdsDiagDialog(
                     Text("滚动文本进度  $rtSegments/16 段", fontSize = 12.sp)
                 }
                 Text(
-                    "PI 码（电台识别）  " + if (piCode >= 0) "0x%04X".format(piCode) else "未锁定",
+                    "PI 码（电台识别）  " + if (piCode >= 0) piDescribe(piCode) else "未锁定",
                     fontSize = 12.sp
                 )
                 if (groupTypes.isNotEmpty()) {

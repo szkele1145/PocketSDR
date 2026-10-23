@@ -991,3 +991,11 @@ fun ptyName(pty: Int): String = when (pty) {
     31 -> "测试"
     else -> ""
 }
+/** PI 码 → 可读描述（IEC 62106 §3.1.3）：拆解国家码/区域码/序号 */
+fun piDescribe(pi: Int): String {
+    if (pi < 0) return "未锁定"
+    val cc = (pi shr 12) and 0xF
+    val ac = (pi shr 8) and 0xF
+    val seq = pi and 0xFF
+    return "0x%04X（国家码 %d，区域码 %d，序号 %d）".format(pi, cc, ac, seq)
+}
