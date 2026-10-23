@@ -68,6 +68,16 @@ class FreqStore(private val context: Context) {
         get() = prefs.getBoolean("onboardingDone", false)
         set(v) { prefs.edit().putBoolean("onboardingDone", v).apply() }
 
+    /**
+     * 只用仿真源（不连真实硬件）。
+     *
+     * 真机到货后如果只想验证界面/录放/搜台逻辑，或者怀疑棒子干扰判断，
+     * 打开它就能强制走仿真源——插着棒子也不切硬件。
+     */
+    var simOnly: Boolean
+        get() = prefs.getBoolean("simOnly", false)
+        set(v) { prefs.edit().putBoolean("simOnly", v).apply() }
+
     /** 频谱峰值保持开关（黄线） */
     var peakHold: Boolean
         get() = prefs.getBoolean("peakHold", false)

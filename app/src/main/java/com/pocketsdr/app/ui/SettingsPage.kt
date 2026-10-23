@@ -336,6 +336,20 @@ fun SettingsPage(
         }
 
         // ===== 显示 =====
+        // ===== 信号源 =====
+        GroupCard("信号源") {
+            var simOnly by remember { mutableStateOf(store.simOnly) }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("只用仿真源", fontSize = 12.sp, color = Color(0xFF8FA3B8))
+                Switch(checked = simOnly, onCheckedChange = {
+                    simOnly = it
+                    store.simOnly = it
+                }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF)))
+                Spacer(Modifier.width(10.dp))
+                Text("插着棒子也用内置仿真电台（改完重启生效）", fontSize = 10.sp, color = Color(0xFF5A6B7F))
+            }
+        }
+
         GroupCard("显示") {
             var peakHold by remember { mutableStateOf(engine.peakHoldEnabled) }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {

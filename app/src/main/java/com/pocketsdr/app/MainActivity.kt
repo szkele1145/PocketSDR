@@ -297,7 +297,11 @@ class MainActivity : ComponentActivity(), UiBridge {
                     val d = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     // 插 U 盘/键鼠也会收到 ATTACHED 广播，非 SDR 设备不弹授权框。
                     // 白名单外的设备（非官方棒子）可在设置页用「USB 诊断」强制连接。
-                    if (d != null && isRtlDevice(d)) maybeRequestPermission(d)
+                    // 开了「只用仿真源」就不因为插入设备而切硬件：
+                    // 用户可能只是插着充电，或者想用棒子时再手动放开。
+                    if (com.pocketsdr.app.FreqStore(context).simOnly) {
+                        pushStatus("已插上设备，但「只用仿真源」开着，不切换硬件")
+                    } else if (d != null && isRtlDevice(d)) maybeRequestPermission(d)
                     refreshUsbPending()
                 }
                 ACTION_USB_PERMISSION -> {
@@ -506,7 +510,8 @@ class MainActivity : ComponentActivity(), UiBridge {
         val lastC = store.lastCenter
         // 已插着设备且有权限？直接上硬件
         val dev = usbManager.deviceList.values.firstOrNull { isRtlDevice(it) }
-        if (dev != null && usbManager.hasPermission(dev)) {
+        // 「只用仿真源」时即便插着棒子也不切硬件
+        if (dev != null && usbManager.hasPermission(dev) && !store.simOnly) {
             switchToHardware(dev, lastC, lastF)
         } else {
             engine = SdrEngine.simulated(this, lastC).also {
