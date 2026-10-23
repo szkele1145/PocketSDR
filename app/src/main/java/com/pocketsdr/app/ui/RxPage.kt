@@ -64,6 +64,10 @@ fun RxPage(
     rdsCrcOk: Int = 0,
     /** 已确认的 PS 段数（0~4），用来显示台名进度 */
     rdsSegments: Int = 0,
+    /** RadioText（滚动文本，最长 64 字符，来自 group 2A）；空串表示这台没发 */
+    rdsText: String = "",
+    /** 节目类型（PTY，IEC 62106 Table 12）；-1 = 还没收到 */
+    rdsPty: Int = -1,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
     /** 插着 USB 设备但没连上时的提示条 */
@@ -303,6 +307,7 @@ fun RxPage(
             // 是「这台没发 RDS」还是「信号太弱」还是「解码链路有问题」——
             // 光看「未收到 RDS」这一行字没法区分。
             if (mode == SdrEngine.Mode.WFM) {
+                val rdsTextS = rdsText.trim()
                 val label = when {
                     rdsName.isNotEmpty() -> "📻 $rdsName"
                     rdsLocked -> "📻 RDS 同步·读台名中"
@@ -316,19 +321,34 @@ fun RxPage(
                         .padding(8.dp)
                         .clickable { showRdsDiag = true }
                 ) {
-                    Text(
-                        // 注意括号：Kotlin 里 if/else 的优先级低于 +，
-                        // 不加括号的话 "ⓘ" 只会出现在单声道分支里。
-                        label + (if (stereoLock > 0.5f) " ·ST" else " ·单声道") + " ⓘ",
-                        color = when {
-                            rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
-                            rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
-                            else -> Color(0xFF5A6B7F)
-                        },
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                    Column {
+                        Text(
+                            // 注意括号：Kotlin 里 if/else 的优先级低于 +，
+                            // 不加括号的话 "ⓘ" 只会出现在单声道分支里。
+                            label + (if (stereoLock > 0.5f) " ·ST" else " ·单声道") +
+                                (if (rdsPty in 0..31) " ·" + ptyName(rdsPty) else "") + " ⓘ",
+                            color = when {
+                                rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
+                                rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
+                                else -> Color(0xFF5A6B7F)
+                            },
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                        // RadioText（滚动文本）：台名只有 8 个字符且不变，
+                        // RT 才是「正在播什么」这类实时信息，单独一行显示。
+                        if (rdsTextS.isNotEmpty()) {
+                            Text(
+                                "📝 $rdsTextS",
+                                color = Color(0xFFB9E6A8),
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 2,
+                                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
             // 视野宽度指示 / 一键复位：捏合缩放没有可见入口，必须给个能点回来的按钮
@@ -917,4 +937,41 @@ private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modif
             drawCircle(Color(0xFFF6D55C), radius = 2.5f, center = it)
         }
     }
+}
+
+/** PTY 码 → 中文节目类型（IEC 62106 Table 12） */
+fun ptyName(pty: Int): String = when (pty) {
+    0 -> "未定义"
+    1 -> "新闻"
+    2 -> "时事"
+    3 -> "信息"
+    4 -> "体育"
+    5 -> "教育"
+    6 -> "戏曲"
+    7 -> "文化"
+    8 -> "科学"
+    9 -> "综艺"
+    10 -> "流行乐"
+    11 -> "摇滚"
+    12 -> "轻音乐"
+    13 -> "古典乐"
+    14 -> "其他音乐"
+    15 -> "天气"
+    16 -> "财经"
+    17 -> "儿童"
+    18 -> "社会"
+    19 -> "宗教"
+    20 -> "电话点播"
+    21 -> "旅行"
+    22 -> "休闲"
+    23 -> "爵士"
+    24 -> "乡村"
+    25 -> "民歌"
+    26 -> "老歌"
+    27 -> "民乐"
+    28 -> "朗诵"
+    29 -> "儿歌"
+    30 -> "特殊"
+    31 -> "测试"
+    else -> ""
 }

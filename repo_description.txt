@@ -1,0 +1,1 @@
+横屏 SDR# 风格安卓收音机：RTL-SDR（RTL2832U+FC0013）即插即用，WFM 立体声 + RDS 台名/RT/PTY，AM/NFM/SSB 全模式，频谱 + 瀑布，无硬件也能仿真体验

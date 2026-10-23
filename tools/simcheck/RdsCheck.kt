@@ -19,13 +19,20 @@ import kotlin.math.sin
 fun main() {
     val fs = 256_000f
     val expected = "POCKETSD"   // 8 字符，RDS PS 字段上限
+    val expectedRt = "HELLO FROM POCKETSDR"
 
-    // 2 秒的 MPX
-    val n = (fs * 2.0f).toInt()
+    // 4 秒的 MPX
+    val n = (fs * 4.0f).toInt()
     val mpx = FloatArray(n)
 
-    // RDS 波形（57k DSB）
-    val rds = RdsEncoder(expected).buildWave(fs)
+    // 57k DSB 波形：**一次性生成足够长的连续波形**，不再循环拼接。
+    // 循环拼接会在接缝处让 57k 载波相位跳变、并插入多余的比特，接缝
+    // 处那一组必然作废（曾经表现为台名永远缺 PS 段 0，显示 "CKETSD"）。
+    // 真实电台是连续发射的，生成连续波形才和真实情况一致。
+    val one = RdsEncoder(expected, expectedRt).buildBaseband(fs)
+    val enc = RdsEncoder(expected, expectedRt)
+    val loops = (n.toDouble() / one.size).toInt() + 1
+    val rds = enc.buildWave(fs, loops)
     var rdsPos = 0
 
     // 19kHz 导频 + 38kHz 副载波（立体声用）+ 1kHz 音频
@@ -38,9 +45,9 @@ fun main() {
         v += 0.02 * cos(2 * Math.PI * 38000 * t)
         // 音频
         v += 0.5 * sin(2 * Math.PI * 1000 * t)
-        // RDS
-        v += rds[rdsPos].toDouble()
-        rdsPos = (rdsPos + 1) % rds.size
+        // RDS（波形足够长，超出就直接结束——不循环）
+        if (rdsPos < rds.size) v += rds[rdsPos].toDouble()
+        rdsPos++
         mpx[i] = v.toFloat()
     }
 
@@ -48,8 +55,18 @@ fun main() {
     for (i in 0 until n) dec.process(mpx[i])
 
     println("stationName = '${dec.stationName}'")
+    println("radioText   = '${dec.radioText}'")
+    println("pty         = ${dec.pty}")
+    println("rtSegments  = ${dec.rtSegments}")
+    println("psSegments  = ${dec.psSegments}")
+    println("crcBlocksOk = ${dec.crcBlocksOk}")
     println("dataLock    = ${dec.dataLock}")
-    val ok = dec.stationName.trim() == expected && dec.dataLock
-    println(if (ok) "PASS: RDS 台名解出正确" else "FAIL: 台名没解出来（期望 '$expected'）")
-    kotlin.system.exitProcess(if (ok) 0 else 1)
+    if (System.getenv("RDS_DEBUG") != null) println(dec.debugDump())
+    val okName = dec.stationName.trim() == expected && dec.dataLock
+    val okRt = dec.radioText.trim() == expectedRt
+    val okPty = dec.pty == 1   // 编码器发的 PTY=1（新闻）
+    println(if (okName) "PASS: RDS 台名解出正确" else "FAIL: 台名没解出来（期望 '$expected'）")
+    println(if (okRt) "PASS: RDS RadioText 解出正确" else "FAIL: RT 没解出来（期望 '$expectedRt'，实得 '${dec.radioText.trim()}'）")
+    println(if (okPty) "PASS: RDS PTY 解出正确 (${dec.pty})" else "FAIL: PTY 不对（期望 1，实得 ${dec.pty}）")
+    kotlin.system.exitProcess(if (okName && okRt && okPty) 0 else 1)
 }

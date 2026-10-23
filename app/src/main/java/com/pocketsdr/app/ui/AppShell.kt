@@ -54,6 +54,10 @@ fun AppShell(
     rdsCrcOk: Int = 0,
     /** 已确认的 PS 段数（0~4） */
     rdsSegments: Int = 0,
+    /** RadioText（group 2A 的滚动文本） */
+    rdsText: String = "",
+    /** 节目类型（PTY） */
+    rdsPty: Int = -1,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
     /** 插着设备但未连接的提示（null = 无提示） */
@@ -86,6 +90,8 @@ fun AppShell(
                         rdsLocked = rdsLocked,
                         rdsCrcOk = rdsCrcOk,
                         rdsSegments = rdsSegments,
+                        rdsText = rdsText,
+                        rdsPty = rdsPty,
                         rdsBestPhase = rdsBestPhase,
                         usbPending = usbPending,
                         // 提示条上的「去连接」：直接切到设置页的 USB 诊断

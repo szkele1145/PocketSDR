@@ -441,6 +441,55 @@ Write-Host "local synced to origin/main: $headShort"
 
 Write-Host ""
 Write-Host "PUBLISHED: $Tag  commit $commitSha"
+
+# ---------------------------------------------------------------------------
+# 9/9 Sync the repository description (About sidebar)
+#
+# The description is what GitHub shows in the About box on EVERY release page
+# and on the repo home page. It was set once, long ago, and the Chinese text was
+# lost in transit - it ended up stored as "????????? SDR ?? (RTL-SDR + ????)".
+# That garbage is visible on all 88 release pages, which is why it looked like
+# "the releases are garbled".
+#
+# The text lives in repo_description.txt (UTF-8, no BOM) because this script is
+# ASCII-only on purpose: PowerShell 5.1 reads BOM-less files as the system
+# codepage (GBK here), so a Chinese literal inside this file would be mangled
+# and could even break parsing.
+# ---------------------------------------------------------------------------
+Write-Host "==> 9/9 Sync repository description"
+$descFile = Join-Path $Repo "repo_description.txt"
+if (Test-Path $descFile) {
+    $descText = [IO.File]::ReadAllText($descFile, [Text.Encoding]::UTF8).Trim()
+    $cur = Get-Json "$ApiBase"
+    $curDesc = ""
+    if ($cur -and $cur.description) { $curDesc = [string]$cur.description }
+    if ($curDesc -ne $descText) {
+        $esc = $descText.Replace("\", "\\").Replace('"', '\"')
+        $descBody = "$Tmp\desc.json"
+        [IO.File]::WriteAllText($descBody, ('{"description":"' + $esc + '"}'), $Utf8NoBom)
+        # Write the response to a file and read it as UTF-8: Invoke-Gh pipes curl's
+        # stdout through Out-String, which decodes it with the console codepage
+        # (GBK here) - the Chinese description would come back as mojibake and
+        # the check below would report a bogus result.
+        $descOut = "$Tmp\desc_resp.json"
+        if (Test-Path $descOut) { Remove-Item $descOut -Force }
+        Invoke-Gh "$ApiBase" -Method PATCH -BodyFile $descBody -OutFile $descOut | Out-Null
+        $dr = ""
+        if (Test-Path $descOut) {
+            $dr = [IO.File]::ReadAllText($descOut, [Text.Encoding]::UTF8)
+        }
+        if ($dr -match '"description"\s*:\s*"((?:[^"\\]|\\.)*)"') {
+            Write-Host "    updated: $($matches[1])"
+        } else {
+            Write-Host "    WARNING: description update returned no description field"
+        }
+    } else {
+        Write-Host "    already up to date"
+    }
+} else {
+    Write-Host "    repo_description.txt not found, skipped"
+}
+
 if ($LogFile) {
     Write-Host "log: $LogFile"
     try { Stop-Transcript | Out-Null } catch {}

@@ -283,9 +283,10 @@ object SelfCheck {
     private fun checkRds(): Item {
         val fs = 256_000f
         val expected = "POCKETSD"     // RDS 的 PS 字段规定 8 个字符
-        val got = runRds(fs, expected, noiseDb = null)
+        val expectedRt = "HELLO FROM POCKETSDR"
+        val got = runRds(fs, expected, expectedRt, noiseDb = null)
         return if (got == expected) {
-            Item("RDS 台名解码", true, "解出「$got」")
+            Item("RDS 台名解码", true, "解出「$got」+ RT")
         } else {
             Item("RDS 台名解码", false, if (got.isEmpty()) "台名没解出来" else "解出「$got」",
                 "RDS 的 Costas 环 / 位同步 / 差分判决 / CRC 有一环不对，台名锁不上")
@@ -308,7 +309,7 @@ object SelfCheck {
         var bestSnr = -1
         var partialAt5 = false
         for (snr in intArrayOf(20, 15, 10, 7, 5)) {
-            val got = runRds(fs, expected, noiseDb = snr)
+            val got = runRds(fs, expected, "HELLO FROM POCKETSDR", noiseDb = snr)
             if (got == expected) {
                 bestSnr = snr
             } else if (snr == 5 && got.isNotEmpty()) {
@@ -332,9 +333,12 @@ object SelfCheck {
      * @param noiseDb 加性高斯噪声的 SNR（dB），null = 不加噪
      * @return 解出的台名（失败时是空串或残缺名字）
      */
-    private fun runRds(fs: Float, expected: String, noiseDb: Int?): String {
-        val n = (fs * 2.0f).toInt()
-        val rds = RdsEncoder(expected).buildWave(fs)
+    private fun runRds(fs: Float, expected: String, expectedRt: String, noiseDb: Int?): String {
+        val n = (fs * 4.0f).toInt()
+        // 连续波形（不循环拼接）：循环会在接缝处让 57k 载波相位跳变、
+        // 并插入多余的比特，接缝那一组必然作废，台名会永远缺一段
+        // （曾经显示成 "CKETSD"）。真电台是连续发射的，这里也连续生成。
+        val rds = RdsEncoder(expected, expectedRt).buildWave(fs, 8)
         val mpx = FloatArray(n)
         var rdsPos = 0
         // 确定性伪随机，保证每次自检结果一致
@@ -353,9 +357,9 @@ object SelfCheck {
             // 19k 导频 0.1 + 38k 副载波 0.02 + 1kHz 音频 0.5 + RDS
             var v = 0.1 * cos(2 * PI * 19000 * t) +
                     0.02 * cos(2 * PI * 38000 * t) +
-                    0.5 * sin(2 * PI * 1000 * t) +
-                    rds[rdsPos].toDouble()
-            rdsPos = (rdsPos + 1) % rds.size
+                    0.5 * sin(2 * PI * 1000 * t)
+            if (rdsPos < rds.size) v += rds[rdsPos].toDouble()
+            rdsPos++
             if (noiseAmp > 0f) v += noiseAmp * rnd() * 2.0
             mpx[i] = v.toFloat()
         }

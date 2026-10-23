@@ -23,7 +23,9 @@ import kotlin.math.sin
 fun main() {
     val fs = 256_000f
     val expected = "POCKETSD"
-    val rds = RdsEncoder(expected).buildWave(fs)
+    val expectedRt = "HELLO FROM POCKETSDR"
+    // 生成足够长的**连续**基带（8 轮 ≈ 6.3 秒 > 测试用的 4 秒），不循环拼接
+    val rds = RdsEncoder(expected, expectedRt).buildBaseband(fs, 8)
     var fail = 0
 
     println("=== RDS 抗噪回归测试 ===")
@@ -42,6 +44,16 @@ fun main() {
         val ok = r.name == expected
         if (!ok) fail++
         println("  ${if (ok) "PASS" else "FAIL"}  载波初相 ${deg}° -> '${r.name}'")
+    }
+
+    println("--- 2b) RT 在各噪声条件下的解出情况（新增，v2.79.0）---")
+    // 20 字符的 RT 要 5 个段全对；7 dB 下偶尔错 1-2 个字符属正常，
+    // 这里只要求 20/10 dB 完整。更低信噪比看 3) 节的 PS 台名门槛。
+    for (snr in intArrayOf(20, 10)) {
+        val r = runCase(fs, expected, rds, 0.05f, 0.0, snr, null)
+        val ok = r.rt == expectedRt
+        if (!ok) fail++
+        println("  ${if (ok) "PASS" else "FAIL"}  SNR ${snr}dB -> RT '${r.rt}'")
     }
 
     println("--- 3) 本底噪声 ---")
@@ -69,7 +81,7 @@ fun main() {
 }
 
 /** 一次测试的结果 */
-class Result(val name: String, val crcOk: Int)
+class Result(val name: String, val crcOk: Int, val rt: String = "")
 
 /**
  * 跑一次 RDS 解码。
@@ -88,16 +100,16 @@ fun runCase(
 ): Result {
     val n = rdsModulated.size
     val w = 2.0 * Math.PI * 57000 / fs
-    val base = FloatArray(n)
-    for (i in 0 until n) {
-        base[i] = rdsModulated[i] / (cos(w * i).toFloat() * 0.15f)
-    }
+    // rdsModulated 现在就是**基带**（RdsEncoder.buildBaseband），直接重新
+    // 调制到指定载波初相即可。以前是从已调制波形 ÷cos(...) 反解基带，
+    // cos 过零点附近除法会炸出尖峰，造成「某些初相必然解不出」的假失败。
+    val base = rdsModulated
     val rds57 = FloatArray(n)
     for (i in 0 until n) {
         rds57[i] = base[i] * cos(w * i + carrierPhase).toFloat() * rdsLevel
     }
 
-    val total = (fs * 2.0f).toInt()
+    val total = (fs * 4.0f).toInt()
     val mpx = FloatArray(total)
     var rdsPos = 0
     // 确定性伪随机（可复现）
@@ -117,13 +129,14 @@ fun runCase(
                 0.02 * cos(2 * Math.PI * 38000 * t) +
                 0.5 * sin(2 * Math.PI * 1000 * t)
         if (jammerHz != null) v += 0.5 * cos(2 * Math.PI * jammerHz * t)
-        v += rds57[rdsPos].toDouble()
-        rdsPos = (rdsPos + 1) % n
+        // 不循环：rds57 已按总长度生成足够长的连续波形
+        if (rdsPos < n) v += rds57[rdsPos].toDouble()
+        rdsPos++
         if (noiseAmp > 0f) v += noiseAmp * rnd() * 2.0
         mpx[i] = v.toFloat()
     }
 
     val dec = RdsDecoder(fs)
     for (i in 0 until total) dec.process(mpx[i])
-    return Result(dec.stationName.trim(), dec.crcBlocksOk)
+    return Result(dec.stationName.trim(), dec.crcBlocksOk, dec.radioText.trim())
 }

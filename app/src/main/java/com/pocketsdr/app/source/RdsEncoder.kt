@@ -12,7 +12,11 @@ import kotlin.math.cos
  *
  * 编码流程：bit 流 → 双相波形 → 57kHz DSB 抑制载波（调制度 ~7.5%）
  */
-class RdsEncoder(private val stationName: String) {
+class RdsEncoder(
+    private val stationName: String,
+    /** RadioText：最长 64 字符的滚动文本（IEC 62106 group 2A），空串表示不发 */
+    private val radioText: String = ""
+) {
 
     companion object {
         // RDS CRC 生成多项式 G(x) = x^10 + x^8 + x^7 + x^5 + x^4 + x^3 + 1
@@ -42,18 +46,25 @@ class RdsEncoder(private val stationName: String) {
 
         // 块 B：group 0A (type=0000, version=0) + TP=0 + PTY=1(新闻) + 段地址
         //
-        // **B 块位布局（IEC 62106 Table 9）**：
+        // **B 块位布局（IEC 62106 §3.1.5.3，Block 2）**：
         //   bit 15-12 : group type
-        //   bit 11    : B0
-        //   bit 10    : A0
+        //   bit 11    : B0  (version: 0 = A, 1 = B)
+        //   bit 10    : TP  (traffic programme)
         //   bit 9-5   : PTY (5 bits)
-        //   bit 4-2   : Segment Address (3 bits)   ← 段地址在这里
-        //   bit 1-0   : C1, C0 (交通信息标志，非 TP 组恒为 0)
+        //   bit 4     : TA  (traffic announcement)
+        //   bit 3     : M/S (music/speech)
+        //   bit 2-1   : DI  (decoder identification)  ← group 0 专有
+        //   bit 0     : Segment Address               ← **PS 段地址在这里**
         //
-        // 之前段地址写在了 bit 1-0 —— 那是 C1/C0 标志位！编码器和解码器
-        // 当时"自洽"，仿真能过，但真机上 C1/C0 恒为 0，所有段的段地址都会
-        // 被读成 0，台名只能显示前 2 个字符。这是典型的「仿真通过、真机失败」。
-        val bB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or ((segment and 0x7) shl 2)
+        // 注意：0 组的 bit 2-0 不是「3 位段地址 + C1/C0」。C1/C0 是 4A 组
+        // 那种带交通信息的组才有的，0 组没有。0 组的段地址只有 **2 位，在 bit 1-0**。
+        //
+        // 这一格踩过两次：最早写在 bit 1-0（对的），v2.78.0 又「纠正」到
+        // bit 4-2（错的），并用同样写错的独立实现互相验证通过。最后拿
+        // redsea（业界通用解码器）的 0B 测试向量实测定案：
+        //   0x9423 0800 0000 2020 / 0801 4B52 / 0802 4B41 / 0807 2020
+        //   → PS = "  KRKA  "（0801 的 bit1-0=01 → 段 1 → "KR" 落在位置 2-3）
+        val bB = (0 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or (segment and 0x3)
         pushWord(bB, 16)
         pushWord(crc10(bB) xor OFFSETS[1], 10)
 
@@ -69,6 +80,56 @@ class RdsEncoder(private val stationName: String) {
         val c1 = chars[segment * 2].code and 0xFF
         val c2 = chars[segment * 2 + 1].code and 0xFF
         val bD = (c1 shl 8) or c2
+        pushWord(bD, 16)
+        pushWord(crc10(bD) xor OFFSETS[3], 10)
+        return bits
+    }
+
+    /**
+     * 生成 group 2A 的帧（RadioText，4 字符/组）。
+     *
+     * ## 位布局（IEC 62106 §3.1.5.3）
+     *
+     * - **A 块永远是 PI 码**（电台识别）。RT 的段地址**不在 A 块**。
+     * - B 块：bit 15-12 group type = 0010；bit 11 B0 = 0（版本 A）；
+     *   bit 10 TP；bit 9-5 PTY；**bit 4 A/B 标志**；
+     *   **bit 3-0 段地址**（4 位，16 段 × 4 字符 = 64 字符）。
+     * - **C 块 = 字符 0-1，D 块 = 字符 2-3**（每块只有 16 bit，4 个字符
+     *   必须拆两块；全塞 D 块会让高 16 bit 直接截断，解出来全是错位字符）。
+     *
+     * 位布局依据：redsea `Station::decodeType2`（业界通用实现）
+     *   radiotext_position = getBits<4>(BLOCK2, 0) * (versionA ? 4 : 2)
+     *   ab                = getBool(BLOCK2, 4)
+     *   C 块 → 位置 +0，D 块 → 位置 +2
+     * 该实现是拿真实电台抓包验证过的，比手写规范解释可靠。
+     */
+    private fun buildRtFrame(segment: Int, aToB: Boolean, chars: CharArray): BooleanArray {
+        val bits = BooleanArray(104)
+        var p = 0
+
+        fun pushWord(v: Int, n: Int) {
+            for (i in n - 1 downTo 0) {
+                bits[p++] = ((v shr i) and 1) == 1
+            }
+        }
+
+        // A 块：PI 码（始终是 PI，段地址不在这里）
+        pushWord(0x1234, 16)
+        pushWord(crc10(0x1234) xor OFFSETS[0], 10)
+
+        // B 块：group 2A + PTY + A/B 标志（bit 4）+ 段地址（bit 3-0）
+        val bB = (2 shl 12) or (0 shl 11) or (0 shl 10) or (1 shl 5) or
+                ((if (aToB) 1 else 0) shl 4) or (segment and 0xF)
+        pushWord(bB, 16)
+        pushWord(crc10(bB) xor OFFSETS[1], 10)
+
+        // C 块：RT 字符 0-1
+        val bC = ((chars[0].code and 0xFF) shl 8) or (chars[1].code and 0xFF)
+        pushWord(bC, 16)
+        pushWord(crc10(bC) xor OFFSETS[2], 10)
+
+        // D 块：RT 字符 2-3
+        val bD = ((chars[2].code and 0xFF) shl 8) or (chars[3].code and 0xFF)
         pushWord(bD, 16)
         pushWord(crc10(bD) xor OFFSETS[3], 10)
         return bits
@@ -131,19 +192,67 @@ class RdsEncoder(private val stationName: String) {
             for (s in 0 until nFirst) wave[p++] = half0
             for (s in 0 until nSecond) wave[p++] = half1
         }
-        return wave
+        // **必须按实际写入长度返回**。上面 total 是 ceil(位数 × 每bit采样数)，
+        // 分数累加后实际写入的 p 通常比 total 少 0~1 个采样，多出来的尾部
+        // 是 FloatArray 的零值——波形末尾突然掉到 0 再回绕，「零采样段」
+        // 会把紧随其后的那一组比特整个毁掉。
+        //
+        // 这个 bug 直到加 RT（组数从 4 变 9）才暴露：回绕点恰好落在
+        // PS 段 0 之前，于是**每轮都必然丢掉段 0 的 "PO"**，台名显示成
+        // "CKETSD"。波形长度对齐到整 bit 之后回绕就落在 bit 边界上，
+        // 不会再毁组。
+        // 按实际写入长度返回（total 是 ceil，实际写入 p 通常少 0~1 个采样，
+        // 多出来的尾部零值会在循环播放时制造电平跳变）。
+        return wave.copyOf(p)
     }
 
     // ---------- 57kHz DSB 调制 ----------
-    /** 预生成一个完整 PS 名循环（4 段 × 104 位）的 57k DSB 波形样本 */
-    fun buildWave(sampleRate: Float): FloatArray {
-        val name = stationName.padEnd(8, ' ').take(8)
-        val bits = BooleanArray(416)
-        for (seg in 0 until 4) {
-            val frame = buildFrame(seg, name.toCharArray())
-            System.arraycopy(frame, 0, bits, seg * 104, 104)
+    /**
+     * 一个完整循环的**基带**双相波形（不含 57kHz 载波）。
+     *
+     * 抗噪回归测试要自己控制载波初相和调制度，所以必须能拿到未调制的
+     * 基带。之前测试是从已调制波形里 `÷ cos(2π·57k·t)` 反解基带——
+     * 在 cos 过零点附近除法会放大成巨大值，等于给波形注入尖峰噪声，
+     * 于是「某些载波初相下台名解不出」的假失败一直存在。
+     */
+    fun buildBaseband(sampleRate: Float, repeats: Int = 1): FloatArray {
+        val base = groupBits()
+        val bits = if (repeats <= 1) base else BooleanArray(base.size * repeats).also {
+            for (k in 0 until repeats) System.arraycopy(base, 0, it, k * base.size, base.size)
         }
-        val base = biphase(bits, sampleRate)
+        return biphase(bits, sampleRate)
+    }
+
+    /** 把 PS 组和 RT 组拼成完整的一轮比特流（每轮 4 个 PS 组 + N 个 RT 组） */
+    private fun groupBits(): BooleanArray {
+        val name = stationName.padEnd(8, ' ').take(8)
+
+        // 组序列：4 个 PS 组，然后 RT 的 N 个段（N = ceil(len/4)，每段 4 字符）。
+        // 真实电台是 PS/RT/其他组按比例混发；这里让 PS 每轮都发一遍，
+        // 保证两轮内就能凑齐 8 个字符的台名。
+        val groups = ArrayList<BooleanArray>()
+        for (seg in 0 until 4) {
+            groups.add(buildFrame(seg, name.toCharArray()))       // PS
+        }
+        if (radioText.isNotEmpty()) {
+            val rt = radioText.padEnd(4, ' ').take(64)
+            val nSeg = (rt.length + 3) / 4
+            val padded = rt.padEnd(nSeg * 4, ' ')
+            for (seg in 0 until nSeg) {
+                groups.add(buildRtFrame(seg, false, padded.substring(seg * 4, seg * 4 + 4).toCharArray()))
+            }
+        }
+
+        val bits = BooleanArray(groups.size * 104)
+        for ((i, g) in groups.withIndex()) {
+            System.arraycopy(g, 0, bits, i * 104, 104)
+        }
+        return bits
+    }
+
+    /** 预生成一个完整循环（PS + RT）的 57k DSB 波形样本；repeats > 1 时连续重复 */
+    fun buildWave(sampleRate: Float, repeats: Int = 1): FloatArray {
+        val base = buildBaseband(sampleRate, repeats)
         // 57k DSB：base × cos(2π·57k·t)，幅度 RDS 调制度 ~ 0.075（相对满偏）
         val out = FloatArray(base.size)
         val w = 2.0 * Math.PI * 57000 / sampleRate

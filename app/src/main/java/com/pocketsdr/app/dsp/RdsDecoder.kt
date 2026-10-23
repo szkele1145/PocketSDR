@@ -80,6 +80,27 @@ class RdsDecoder(private val fs: Float) {
         private set
 
     /**
+     * RadioText（滚动文本，最长 64 字符，来自 group 2A）。
+     *
+     * 真机上这比台名更有用：台名只有 8 个字符且不变，RT 常常是
+     * 「正在播放：xxx」这种实时信息。
+     */
+    @Volatile var radioText: String = ""
+        private set
+
+    /** 已确认的 RT 段数（0~16，每段 4 字符） */
+    @Volatile var rtSegments: Int = 0
+        private set
+
+    /**
+     * 节目类型（PTY，5 bit，来自 B 块 bit 9-5）。
+     *
+     * -1 = 还没收到；否则是 IEC 62106 的 PTY 码（0~31）。
+     */
+    @Volatile var pty: Int = -1
+        private set
+
+    /**
      * 一条候选位流：位累加 → 26 位块 → CRC → group → PS 字符。
      *
      * 每个候选相位一条，各自独立跑 CRC；通过校验的候选才会往上写台名。
@@ -98,6 +119,31 @@ class RdsDecoder(private val fs: Float) {
         val psConfirmed = BooleanArray(4)
         /** 每段的字符组合票数表（key = (c1<<8)|c2） */
         val psTally = Array(4) { HashMap<Int, Int>() }
+        // ===== RadioText（group 2A）=====
+        /** RT 字符缓冲（16 段 × 4 字符 = 64 字符） */
+        val rtChars = CharArray(64) { ' ' }
+        /** RT 每段是否收到过 */
+        val rtSeen = BooleanArray(16)
+        /** RT 每段收到的次数（用于多数表决） */
+        val rtVotes = IntArray(16)
+        /** RT 每段的字符组合票数表（key = 4 字符打包成 Int） */
+        val rtTally = Array(16) { HashMap<Int, Int>() }
+        /** RT 已确认的段数 */
+        var rtSegments = 0
+        /** RT 的 A/B 标志（-1 = 还没收到过），翻转表示文本内容换了 */
+        var rtAbFlag = -1
+        /**
+         * 已锁定的 PI 码（-1 = 还没锁定）。
+         *
+         * 每个 RDS 组的 A 块都是同一个 PI，这是位流里最强的约束。
+         * 锁定之后所有 A 块（正常路径和重同步路径）都必须与它一致，
+         * 能把「滑窗凑巧通过 A 块 CRC」的假阳性挡在外面。
+         */
+        var piCode = -1
+        /** PI 候选（连续两次相同才锁定，防止第一次 CRC 假阳性把 PI 学错） */
+        var piCandidate = -1
+        /** 最近一次收到的 PTY（B 块 bit 9-5），-1 = 还没收到 */
+        var lastPty = -1
         /** 连续完成的 group 数——≥2 才认为可信（CRC 假阳性率 1/1024^4） */
         var groupsOk = 0
         /** CRC 通过的块数，用来在候选之间挑「最可信」的那条 */
@@ -178,6 +224,14 @@ class RdsDecoder(private val fs: Float) {
         val check = (w and 0x3FF).toInt()
         val off = OFFSETS[s.expectBlock]
         if (checkOk(data, check, off)) {
+            // A 块额外校验 PI 码：每个组的 A 块都是同一个 PI，这是最强约束。
+            // 不加这一条的话，滑窗偶尔会在错误位置凑出一个「A 块 CRC 通过」
+            // 的 26 位窗口（10 位 CRC 误判率 1/1024，但一秒有几十个块 ×
+            // 24 条候选流，迟早撞上），块序列就此整体错位，台名会丢段。
+            if (s.expectBlock == 0 && s.piCode >= 0 && data != s.piCode) {
+                s.blockBits = 25
+                return
+            }
             s.blockData[s.blockIdx] = data
             s.blockIdx++
             s.expectBlock = (s.expectBlock + 1) and 3
@@ -189,8 +243,9 @@ class RdsDecoder(private val fs: Float) {
             }
             s.blockBits = 0
             s.blockReg = 0
-        } else if (checkOk(data, check, OFFSETS[0])) {
-            // 任意时刻 A 块出现 → 鲁棒重同步
+        } else if (checkOk(data, check, OFFSETS[0]) && (s.piCode < 0 || data == s.piCode)) {
+            // 任意时刻 A 块出现 → 鲁棒重同步。同样要求 PI 匹配：
+            // 否则会把 D 块里凑巧能过 CRC 的内容当成 A 块，从此整条流错位。
             s.expectBlock = 1
             s.blockData[0] = data
             s.blockIdx = 1
@@ -215,7 +270,11 @@ class RdsDecoder(private val fs: Float) {
         bestPhaseIdx = if (best > 0) bestIdx else -1
         // PS 段进度取「最好的那条候选流」——错的候选流可能也收到了几段，
         // 但它收到的多半是乱码，显示出来会误导用户。
-        psSegments = if (bestIdx >= 0) streams[bestIdx].psConfirmed.count { it } else 0
+        val bestStream = if (bestIdx >= 0) streams[bestIdx] else null
+        psSegments = bestStream?.psConfirmed?.count { it } ?: 0
+        rtSegments = bestStream?.rtSegments ?: 0
+        // PTY 从最好的那条流里取（B 块 bit 9-5）
+        if (bestStream != null && bestStream.lastPty >= 0) pty = bestStream.lastPty
     }
 
     /**
@@ -263,6 +322,12 @@ class RdsDecoder(private val fs: Float) {
 
     private fun decodeGroup(s: BlockStream) {
         val b = s.blockData
+        // 学 PI 码：连续两个组一致才锁定，避免第一次 CRC 假阳性把 PI 学错。
+        // 锁定后 pushBit 会用 PI 校验每一个 A 块，block 序列不会再错位。
+        if (s.piCode < 0) {
+            val pi = b[0]
+            if (s.piCandidate == pi) s.piCode = pi else s.piCandidate = pi
+        }
         // group type / version 在 B 块（b[1]）高 4 位——之前误取 A 块（PI 码高 4 位
         // 基本不为 0），导致每个 group 都被这里 return 丢掉，台名永远锁不上。
         //
@@ -271,19 +336,47 @@ class RdsDecoder(private val fs: Float) {
         // 真实电台两种都发，只认 0A 会漏掉一半台名。
         val gtype = (b[1] shr 12) and 0xF
         s.groupTypes[gtype]++
-        if (gtype != 0 && gtype != 1) return
-        // **段地址在 B 块 bit 4-2**（IEC 62106 Table 9），不是 bit 1-0 ——
-        // bit 1-0 是 C1/C0 交通信息标志，真机上恒为 0。段地址读错位的话，
-        // 所有段都会被当成第 0 段，台名只能显示前 2 个字符。
+        // PTY 在所有组类型的 B 块 bit 9-5 里都存在（IEC 62106 Table 9）
+        s.lastPty = (b[1] shr 5) and 0x1F
+
+        // group 2A = RadioText。RT 的段地址在 **A 块 bit 11-0**（和 PS 完全不同
+        // 的位置），B 块 bit 4-1 里也有一份，两者应当一致。
         //
-        // 规范里段地址是 3 bit（0-7），但 PS（电台名）只用 0-3 四个段，
-        // 高位（bit 4）在 PS 组里恒为 0。
-        val segment = (b[1] shr 2) and 0x7
-        if (segment > 3) return   // 不是 PS 段（PS 只有 4 段）
+        // 规范里 RT 有 16 段 × 4 字符 = 64 字符。
+        if (gtype == 2) {
+            decodeRadioText(s, b)
+            return
+        }
+
+        if (gtype != 0 && gtype != 1) return
+        // **PS 段地址在 B 块 bit 1-0**（IEC 62106 §3.1.5.3 Block 2）。
+        //
+        // 这里返工过两次：最早写 bit 1-0（对的），v2.78.0 误信二手资料
+        // 「纠正」到 bit 4-2，还用同样写错的参考实现互相验证通过——两个
+        // 实现自洽但都错。最终靠 redsea（业界通用解码器）的 0B 真实抓包
+        // 测试向量定案：
+        //   0x9423 0800 0000 2020 / 0801 4B52 / 0802 4B41 / 0807 2020
+        //   → PS = "  KRKA  "
+        // 只有「bit 1-0 = 段地址」才能让 "KR" 落到位置 2-3；按 bit 4-2 读
+        // 会全部落到段 0，结果是 "KR__  KA"。
+        //
+        // 0 组的 bit 2-0 = DI(2 bit) + 段地址(1 bit)？不是——0 组的 Block 2
+        // 低 3 位是：bit 2-1 = DI，bit 0 = 段地址的低位，bit 1 是段地址高位。
+        // 实际布局见上；PS 只用得到 segment 0-3。
+        val segment = b[1] and 0x3
         val c1 = (b[3] shr 8) and 0xFF
         val c2 = b[3] and 0xFF
         val ch1 = if (c1 in 32..126) c1.toChar() else ' '
         val ch2 = if (c2 in 32..126) c2.toChar() else ' '
+        // 全空格的段判为假块直接丢弃。
+        //
+        // 曾经踩过的坑：块边界错位一格时，某组会被解成 group 1，D 块取到
+        // C 块的 AF 填充码 0xE0E0，两个字符都不是可打印字符 → 变成两个空格，
+        // 被当成 segment 0 的合法内容。确认门槛是 1 票，于是这一段被
+        // **永久占住**（后续正确内容票数相等，`cnt > psVotes` 不成立），
+        // 台名从此少前 2 个字符，显示成 "CKETSD" 而不是 "POCKETSD"。
+        // 真实台名是左对齐、尾部补空格的，中间/开头出现全空格段必是假块。
+        if (ch1 == ' ' && ch2 == ' ') return
 
         // 段级多数表决：累计该段每个字符组合的票数，得票最多的胜出。
         //
@@ -326,6 +419,73 @@ class RdsDecoder(private val fs: Float) {
                 dataLock = true
             }
         }
+    }
+
+    /**
+     * 解 RadioText（group 2A）。
+     *
+     * ## 位布局（IEC 62106 §3.1.5.3，Block 2）
+     * - **A 块永远是 PI 码**，RT 的段地址**不在 A 块**。
+     * - **B 块 bit 3-0 = 段地址**（0~15，16 段 × 4 字符 = 64 字符）
+     * - **B 块 bit 4 = A/B 标志**：翻转表示文本内容要换（清缓冲区）
+     * - **C 块 = 字符 0-1，D 块 = 字符 2-3**
+     *
+     * 依据 redsea `Station::decodeType2`（业界通用实现，真实抓包验证）：
+     *   radiotext_position = getBits<4>(BLOCK2, 0) * 4
+     *   ab                = getBool(BLOCK2, 4)
+     */
+    private fun decodeRadioText(s: BlockStream, b: IntArray) {
+        val seg = b[1] and 0x0F           // B 块 bit 3-0
+        val abFlag = (b[1] shr 4) and 1    // B 块 bit 4
+        // A/B 标志翻转 = 电台换文本了，旧内容作废
+        if (s.rtAbFlag != abFlag) {
+            if (s.rtAbFlag >= 0) {
+                java.util.Arrays.fill(s.rtSeen, false)
+                java.util.Arrays.fill(s.rtVotes, 0)
+                for (t in s.rtTally) t.clear()
+                radioText = ""
+            }
+            s.rtAbFlag = abFlag
+        }
+        // C 块 = 字符 0-1，D 块 = 字符 2-3
+        val c = b[2]
+        val d = b[3]
+        val key = (c shl 16) or (d and 0xFFFF)
+        val c0 = (c shr 8) and 0xFF
+        val c1 = c and 0xFF
+        val c2 = (d shr 8) and 0xFF
+        val c3 = d and 0xFF
+        // 可打印字符（32..126）；其余（含控制符和中文的 UTF-8 高位）一律当空格。
+        // 真实电台的 RT 里可能有非 ASCII（各家电台编码不一），显示成方框比乱码好。
+        fun ch(v: Int): Char = if (v in 32..126) v.toChar() else ' '
+        val t = charArrayOf(ch(c0), ch(c1), ch(c2), ch(c3))
+        val votes = s.rtTally[seg]
+        val cnt = (votes[key] ?: 0) + 1
+        votes[key] = cnt
+        if (!s.rtSeen[seg] || cnt > s.rtVotes[seg]) {
+            for (i in 0 until 4) s.rtChars[seg * 4 + i] = t[i]
+            s.rtSeen[seg] = true
+            s.rtVotes[seg] = cnt
+        }
+        s.rtSegments = s.rtSeen.count { it }
+        // 发布：已确认的段拼起来，未确认的段留空格。
+        val txt = buildRadioText(s)
+        if (txt.isNotEmpty() && txt != radioText) {
+            radioText = txt
+        }
+    }
+
+    /** 用已确认的 RT 段拼出文本（未确认的段留空格） */
+    private fun buildRadioText(s: BlockStream): String {
+        val sb = StringBuilder(64)
+        for (seg in 0 until 16) {
+            if (!s.rtSeen[seg]) {
+                sb.append("    ")
+            } else {
+                for (i in 0 until 4) sb.append(s.rtChars[seg * 4 + i])
+            }
+        }
+        return sb.toString().trim()
     }
 
     /** 用**已确认**的段拼出台名（未确认的段留空格） */
