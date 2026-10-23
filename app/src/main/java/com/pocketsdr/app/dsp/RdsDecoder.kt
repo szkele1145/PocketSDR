@@ -544,7 +544,7 @@ class RdsDecoder(private val fs: Float) {
         val c3 = d and 0xFF
         // 可打印字符（32..126）；其余（含控制符和中文的 UTF-8 高位）一律当空格。
         // 真实电台的 RT 里可能有非 ASCII（各家电台编码不一），显示成方框比乱码好。
-        fun ch(v: Int): Char = if (v in 32..126) v.toChar() else ' '
+        fun ch(v: Int): Char = when (v) { 0x0D -> '\u000D'; 0x0A -> '\u000A'; 0x00 -> '\u0000'; in 32..126 -> v.toChar(); else -> ' ' }
         val t = charArrayOf(ch(c0), ch(c1), ch(c2), ch(c3))
         val votes = s.rtTally[seg]
         val cnt = (votes[key] ?: 0) + 1
@@ -565,14 +565,24 @@ class RdsDecoder(private val fs: Float) {
     /** 用已确认的 RT 段拼出文本（未确认的段留空格） */
     private fun buildRadioText(s: BlockStream): String {
         val sb = StringBuilder(64)
+        // RT 有终止符：ET(0x0D) / BT(0x0A) / NUL(0x00) 表示文本到此为止，
+        // 电台常发 "HELLO FROM POCKETSDR\x0D..." 这种带填充的形式。
+        // 不截断的话尾部会出现一堆空格或控制符，trim() 也清不干净（空格前还有字符时）。
         for (seg in 0 until 16) {
             if (!s.rtSeen[seg]) {
                 sb.append("    ")
-            } else {
-                for (i in 0 until 4) sb.append(s.rtChars[seg * 4 + i])
+                continue
+            }
+            for (i in 0 until 4) {
+                val ch = s.rtChars[seg * 4 + i]
+                if (ch == '\u000D' || ch == '\u000A' || ch == '\u0000') {
+                    // 截断：后面的内容作废（但不删，电台切文本时 A/B 标志会清空）
+                    return sb.toString().trimEnd()
+                }
+                sb.append(ch)
             }
         }
-        return sb.toString().trim()
+        return sb.toString().trimEnd()
     }
 
     /** 用**已确认**的段拼出台名（未确认的段留空格） */
