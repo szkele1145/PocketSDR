@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var rdsPiState by mutableStateOf(-1)
     private var rdsGroupsState by mutableStateOf("")
     private var rdsRtSegState by mutableStateOf(0)
+    private var rdsTaState by mutableStateOf(false)
+    private var rdsTpState by mutableStateOf(false)
     /** 最佳判决相位 */
     private var rdsBestPhase by mutableStateOf(-1)
     private var engineReady by mutableStateOf(false)
@@ -97,6 +99,8 @@ class MainActivity : ComponentActivity(), UiBridge {
                 rdsPiState = engine?.rds?.piCode ?: -1
                 rdsGroupsState = engine?.rds?.groupTypesSummary ?: ""
                 rdsRtSegState = engine?.rds?.rtSegments ?: 0
+                rdsTaState = engine?.rds?.trafficAnnouncement ?: false
+                rdsTpState = engine?.rds?.trafficProgram ?: false
                 rdsBestPhase = engine?.rds?.bestPhaseIdx ?: -1
                 // 未连接提示跟着刷新：权限可能在后台被授予/撤销（用户到设置页操作）
                 refreshUsbPending()
@@ -594,6 +598,8 @@ class MainActivity : ComponentActivity(), UiBridge {
                 rdsGroups = rdsGroupsState,
                 rdsRtSegments = rdsRtSegState,
                 rdsBestPhase = rdsBestPhase,
+                rdsTa = rdsTaState,
+                rdsTp = rdsTpState,
                 usbPending = usbPendingText,
                 usbErrorFull = hwErrorFull,
                 onExit = { finish() }

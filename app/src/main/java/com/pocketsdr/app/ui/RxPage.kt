@@ -76,6 +76,8 @@ fun RxPage(
     rdsRtSegments: Int = 0,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
+    rdsTa: Boolean = false,
+    rdsTp: Boolean = false,
     /** 插着 USB 设备但没连上时的提示条 */
     usbPending: String? = null,
     /** 提示条上的「去连接」→ 跳设置页 USB 诊断 */
@@ -337,7 +339,8 @@ fun RxPage(
                             // 注意括号：Kotlin 里 if/else 的优先级低于 +，
                             // 不加括号的话 "ⓘ" 只会出现在单声道分支里。
                             label + (if (stereoLock > 0.5f) " ·ST" else " ·单声道") +
-                                (if (rdsPty in 0..31) " ·" + ptyName(rdsPty) else "") + " ⓘ",
+                                (if (rdsPty in 0..31) " ·" + ptyName(rdsPty) else "") +
+                                (if (rdsTa) " ·TA" else if (rdsTp) " ·TP" else "") + " ⓘ",
                             color = when {
                                 rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
                                 rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
@@ -743,6 +746,8 @@ fun RxPage(
                     rtText = rdsText,
                     rtSegments = rdsRtSegments,
                     pty = rdsPty,
+                    rdsTa = rdsTa,
+                    rdsTp = rdsTp,
                     signalDb = signalDb,
                     onDismiss = { showRdsDiag = false }
                 )

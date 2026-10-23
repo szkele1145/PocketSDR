@@ -394,7 +394,9 @@ fun RdsDiagDialog(
     groupTypes: String = "",
     rtText: String = "",
     rtSegments: Int = 0,
-    pty: Int = -1
+    pty: Int = -1,
+    rdsTa: Boolean = false,
+    rdsTp: Boolean = false
 ) {
     // 台名进度条：4 段，每段 2 个字符
     val segText = buildString {
@@ -426,6 +428,12 @@ fun RdsDiagDialog(
                 }
                 if (pty in 0..31) {
                     Text("节目类型  " + ptyName(pty) + "（PTY $pty）", fontSize = 12.sp)
+                }
+                if (rdsTp) {
+                    Text("交通节目（TP）", fontSize = 12.sp, color = Color(0xFF7DF3FF))
+                }
+                if (rdsTa) {
+                    Text("⚠ 交通公告（TA）", fontSize = 12.sp, color = Color(0xFFFF5252))
                 }
                 Text("CRC 通过块数  $crcOk", fontSize = 12.sp)
                 Text(

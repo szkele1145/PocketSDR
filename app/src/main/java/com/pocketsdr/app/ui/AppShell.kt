@@ -66,6 +66,8 @@ fun AppShell(
     rdsRtSegments: Int = 0,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
+    rdsTa: Boolean = false,
+    rdsTp: Boolean = false,
     /** 插着设备但未连接的提示（null = 无提示） */
     usbPending: String? = null,
     /** 最近一次硬件连接失败的完整原因（横幅上截断了，完整版在 USB 诊断页显示） */

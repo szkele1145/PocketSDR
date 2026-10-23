@@ -108,6 +108,10 @@ class RdsDecoder(private val fs: Float) {
      */
     @Volatile var piCode: Int = -1
         private set
+    @Volatile var trafficProgram: Boolean = false
+        private set
+    @Volatile var trafficAnnouncement: Boolean = false
+        private set
 
     /**
      * 收到的组类型分布，形如 `0A×12 2A×8`。
@@ -162,6 +166,8 @@ class RdsDecoder(private val fs: Float) {
         var piCandidate = -1
         /** 最近一次收到的 PTY（B 块 bit 9-5），-1 = 还没收到 */
         var lastPty = -1
+        var tp = false
+        var ta = false
         /** 连续完成的 group 数——≥2 才认为可信（CRC 假阳性率 1/1024^4） */
         var groupsOk = 0
         /** CRC 通过的块数，用来在候选之间挑「最可信」的那条 */
@@ -198,6 +204,8 @@ class RdsDecoder(private val fs: Float) {
             piCode = -1
             piCandidate = -1
             lastPty = -1
+            tp = false
+            ta = false
             groupsOk = 0
             java.util.Arrays.fill(groupTypes, 0)
         }
@@ -219,6 +227,8 @@ class RdsDecoder(private val fs: Float) {
         radioText = ""
         pty = -1
         piCode = -1
+        trafficProgram = false
+        trafficAnnouncement = false
         groupTypesSummary = ""
         crcBlocksOk = 0
         bestPhaseIdx = -1
@@ -349,6 +359,8 @@ class RdsDecoder(private val fs: Float) {
         if (bestStream != null && bestStream.lastPty >= 0) pty = bestStream.lastPty
         if (bestStream != null) {
             if (bestStream.piCode >= 0) piCode = bestStream.piCode
+            trafficProgram = bestStream.tp
+            trafficAnnouncement = bestStream.ta
             // 组类型分布（只列真的收到过的，按类型号排序，最多列 6 种）
             val sb = StringBuilder()
             var listed = 0
@@ -425,6 +437,9 @@ class RdsDecoder(private val fs: Float) {
         s.groupTypes[gtype]++
         // PTY 在所有组类型的 B 块 bit 9-5 里都存在（IEC 62106 Table 9）
         s.lastPty = (b[1] shr 5) and 0x1F
+        // TP bit 10，TA bit 4（IEC 62106）
+        s.tp = ((b[1] shr 10) and 1) == 1
+        s.ta = ((b[1] shr 4) and 1) == 1
 
         // group 2A = RadioText。RT 的段地址在 **A 块 bit 11-0**（和 PS 完全不同
         // 的位置），B 块 bit 4-1 里也有一份，两者应当一致。
