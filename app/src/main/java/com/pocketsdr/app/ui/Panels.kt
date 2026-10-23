@@ -243,8 +243,20 @@ fun ScanDialog(
                                 }) {
                                     // 「±」标记：这个频率是细扫出来的真实载频，
                                     // 不是粗扫的网格点——用户按它调谐能对得更准。
-                                    Text(formatFreq(st.freq) + if (st.refined) " ±" else "",
-                                        fontSize = 14.sp)
+                                    // 有 RDS 台名就显示台名（扫的时候就顺手读了），
+                                    // 没有就退回频率
+                                    Text(
+                                        if (st.name.isNotEmpty()) st.name
+                                        else formatFreq(st.freq) + if (st.refined) " ±" else "",
+                                        fontSize = 14.sp
+                                    )
+                                    // 有台名时频率放右边小字，两个信息都不丢
+                                    if (st.name.isNotEmpty()) {
+                                        Text(
+                                            formatFreq(st.freq) + if (st.refined) " ±" else "",
+                                            fontSize = 11.sp, color = Color(0xFF5A6B7F)
+                                        )
+                                    }
                                 }
                                 Text("${st.levelDb.toInt()}dB", fontSize = 11.sp,
                                     color = Color(0xFF5A6B7F), modifier = Modifier.weight(1f))
@@ -258,7 +270,8 @@ fun ScanDialog(
                                         } else {
                                             store.addFavorite(
                                                 com.pocketsdr.app.FreqStore.Ch(
-                                                    formatFreq(st.freq), st.freq,
+                                                    // 有台名就用台名当收藏名，否则退回频率
+                                                    st.name.ifEmpty { formatFreq(st.freq) }, st.freq,
                                                     FreqStore.modeIndex(band.listenMode))
                                             )
                                             favFreqs.add(st.freq)

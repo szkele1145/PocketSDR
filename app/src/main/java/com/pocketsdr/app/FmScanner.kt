@@ -31,7 +31,13 @@ class FmScanner(
      * @param refined 是否经过频率精化。UI 用它标注「这个频率是细扫出来的」，
      *   免得用户以为还是原来的网格值。
      */
-    data class Station(val freq: Long, val levelDb: Float, val refined: Boolean = false)
+    data class Station(
+        val freq: Long,
+        val levelDb: Float,
+        val refined: Boolean = false,
+        /** 扫到时顺手读到的 RDS 台名；读不到就是空串 */
+        val name: String = ""
+    )
 
     companion object {
         /**
@@ -41,6 +47,14 @@ class FmScanner(
          * DSP 统计没稳就采，读到的差异可能是噪声波动而不是频率偏差。
          */
         private const val REFINE_SETTLE_MS = 90L
+        /**
+         * 每个找到的台最多花多久等 RDS 台名。
+         *
+         * 电台名分 4 段发，真机通常 1~2 秒凑齐；这里给 1.6 秒上限，
+         * 读到就提前跳出。10 个台的波段最多多花 16 秒，比扫完再逐个
+         * 回头调谐一遍便宜得多。
+         */
+        private const val NAME_DWELL_MS = 1600
     }
 
     /** 本次扫描实际使用的阈值与噪声底（UI 可显示，便于真机判断灵敏度） */
@@ -128,6 +142,37 @@ class FmScanner(
         if (bestF != gridFreq) {
             SdrLog.i("SCAN", "频率精化 ${gridFreq / 1000}kHz → ${bestF / 1000}kHz")
         }
+
+        // 顺手读一下 RDS 台名。
+        //
+        // 此刻引擎已经停在最佳频点上，只要多停一会儿等 RDS 锁定就行——不用
+        // 扫完之后再回头逐个调谐一遍。电台名分 4 段发，真机通常 1~2 秒凑齐，
+        // 所以最多等 NAME_DWELL_MS，读到就提前跳出（弱台不拖慢整轮扫描）。
+        //
+        // 扫出来的列表里只有频率的话，用户还得一个个记住「98.3 是音乐台」；
+        // 带上台名之后一眼就能挑。
+        var stationName = ""
+        if (!cancelled) {
+            var waited = 0
+            while (waited < NAME_DWELL_MS && !cancelled) {
+                try {
+                    Thread.sleep(100)
+                } catch (_: InterruptedException) {
+                    cancelled = true
+                    break
+                }
+                waited += 100
+                val nm = engine.rds?.stationName?.trim().orEmpty()
+                // 少于 4 个字符的名字多半是刚解出一段半段的残名，继续等
+                if (nm.length >= 4) {
+                    stationName = nm
+                    break
+                }
+            }
+            if (stationName.isNotEmpty()) {
+                SdrLog.i("SCAN", "读电台名 ${bestF / 1000}kHz → $stationName")
+            }
+        }
         // 必须回到网格点：精化把引擎停在了 bestF，而粗扫的游标还在等下一个网格点。
         // 不回去的话，下一次测量读到的是 bestF 的能量，会把它当成下一个网格点的值——
         // 这正是「搜出来的台频点错位」的老毛病。
@@ -139,7 +184,7 @@ class FmScanner(
                 cancelled = true
             }
         }
-        return Station(bestF, bestDb, refined = true)
+        return Station(bestF, bestDb, refined = true, name = stationName)
     }
 
     /**
