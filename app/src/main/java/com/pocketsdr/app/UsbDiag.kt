@@ -45,11 +45,15 @@ object UsbDiag {
         0x0413 shl 16 or 0x6680,   // FITI（部分量产棒）
         0x1f4d shl 16 or 0xb803,   // FC0013 量产棒
         0x1f4d shl 16 or 0xc803,
+        0x1f4d shl 16 or 0xa803,
         0x1b80 shl 16 or 0xd398,   // 杂牌 RTL2832
         0x1b80 shl 16 or 0xd397,
         0x1b80 shl 16 or 0xd393,
+        0x1b80 shl 16 or 0xd3a4,
         0x185b shl 16 or 0x0620,   // 另一类量产棒
-        0x185b shl 16 or 0x0650
+        0x185b shl 16 or 0x0650,
+        0x1d19 shl 16 or 0x1101,   // Dexin（部分 FC0013 棒）
+        0x0ccd shl 16 or 0x00a9    // TerraTec（FC0013 经典款）
     )
 
     /** 白名单，必须与 res/xml/device_filter.xml 完全一致。 */
