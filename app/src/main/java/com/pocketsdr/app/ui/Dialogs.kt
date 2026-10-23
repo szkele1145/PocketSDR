@@ -389,7 +389,12 @@ fun RdsDiagDialog(
     segments: Int,
     bestPhase: Int,
     signalDb: Float,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    piCode: Int = -1,
+    groupTypes: String = "",
+    rtText: String = "",
+    rtSegments: Int = 0,
+    pty: Int = -1
 ) {
     // 台名进度条：4 段，每段 2 个字符
     val segText = buildString {
@@ -409,6 +414,19 @@ fun RdsDiagDialog(
                 Text(verdict, fontSize = 13.sp, color = Color(0xFF9FB4CC))
                 Spacer(Modifier.height(10.dp))
                 Text("台名进度  $segText  ($segments/4 段)", fontSize = 12.sp)
+                if (rtSegments > 0) {
+                    Text("滚动文本进度  $rtSegments/16 段", fontSize = 12.sp)
+                }
+                Text(
+                    "PI 码（电台识别）  " + if (piCode >= 0) "0x%04X".format(piCode) else "未锁定",
+                    fontSize = 12.sp
+                )
+                if (groupTypes.isNotEmpty()) {
+                    Text("收到的组  $groupTypes", fontSize = 12.sp)
+                }
+                if (pty in 0..31) {
+                    Text("节目类型  " + ptyName(pty) + "（PTY $pty）", fontSize = 12.sp)
+                }
                 Text("CRC 通过块数  $crcOk", fontSize = 12.sp)
                 Text(
                     "判决相位  " + if (bestPhase >= 0) "第 $bestPhase 号候选已锁定" else "未锁定",
@@ -419,10 +437,14 @@ fun RdsDiagDialog(
                         if (signalDb > -60) "（够强）" else "（偏弱，RDS 可能读不出）",
                     fontSize = 12.sp
                 )
+                if (rtText.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("滚动文本  $rtText", fontSize = 12.sp, color = Color(0xFFB9E6A8))
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "RDS 台名字段最长 8 个字符，分 4 段发送，每段重复若干遍后才确认——" +
-                        "弱信号下先显示已确认的部分。",
+                    "台名最长 8 个字符分 4 段发送，滚动文本最长 64 个字符分 16 段发送，" +
+                        "每段重复若干遍后才确认——弱信号下先显示已确认的部分。",
                     fontSize = 11.sp, color = Color(0xFF5A6B7F)
                 )
             }

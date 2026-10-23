@@ -52,6 +52,9 @@ class MainActivity : ComponentActivity(), UiBridge {
     private var rdsSegments by mutableStateOf(0)
     private var rdsTextState by mutableStateOf("")
     private var rdsPtyState by mutableStateOf(-1)
+    private var rdsPiState by mutableStateOf(-1)
+    private var rdsGroupsState by mutableStateOf("")
+    private var rdsRtSegState by mutableStateOf(0)
     /** 最佳判决相位 */
     private var rdsBestPhase by mutableStateOf(-1)
     private var engineReady by mutableStateOf(false)
@@ -91,6 +94,9 @@ class MainActivity : ComponentActivity(), UiBridge {
                 rdsSegments = engine?.rds?.psSegments ?: 0
                 rdsTextState = engine?.rds?.radioText ?: ""
                 rdsPtyState = engine?.rds?.pty ?: -1
+                rdsPiState = engine?.rds?.piCode ?: -1
+                rdsGroupsState = engine?.rds?.groupTypesSummary ?: ""
+                rdsRtSegState = engine?.rds?.rtSegments ?: 0
                 rdsBestPhase = engine?.rds?.bestPhaseIdx ?: -1
                 // 未连接提示跟着刷新：权限可能在后台被授予/撤销（用户到设置页操作）
                 refreshUsbPending()
@@ -579,6 +585,9 @@ class MainActivity : ComponentActivity(), UiBridge {
                 rdsSegments = rdsSegments,
                 rdsText = rdsTextState,
                 rdsPty = rdsPtyState,
+                rdsPi = rdsPiState,
+                rdsGroups = rdsGroupsState,
+                rdsRtSegments = rdsRtSegState,
                 rdsBestPhase = rdsBestPhase,
                 usbPending = usbPendingText,
                 usbErrorFull = hwErrorFull,

@@ -58,6 +58,12 @@ fun AppShell(
     rdsText: String = "",
     /** 节目类型（PTY） */
     rdsPty: Int = -1,
+    /** PI 码（电台识别） */
+    rdsPi: Int = -1,
+    /** 收到的 RDS 组类型分布 */
+    rdsGroups: String = "",
+    /** 已确认的 RT 段数 */
+    rdsRtSegments: Int = 0,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
     /** 插着设备但未连接的提示（null = 无提示） */
@@ -92,6 +98,9 @@ fun AppShell(
                         rdsSegments = rdsSegments,
                         rdsText = rdsText,
                         rdsPty = rdsPty,
+                        rdsPi = rdsPi,
+                        rdsGroups = rdsGroups,
+                        rdsRtSegments = rdsRtSegments,
                         rdsBestPhase = rdsBestPhase,
                         usbPending = usbPending,
                         // 提示条上的「去连接」：直接切到设置页的 USB 诊断

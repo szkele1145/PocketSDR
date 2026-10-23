@@ -68,6 +68,12 @@ fun RxPage(
     rdsText: String = "",
     /** 节目类型（PTY，IEC 62106 Table 12）；-1 = 还没收到 */
     rdsPty: Int = -1,
+    /** PI 码（电台识别码）；-1 = 还没锁定 */
+    rdsPi: Int = -1,
+    /** 收到的组类型分布，形如 "0A×12 2A×8" */
+    rdsGroups: String = "",
+    /** 已确认的 RT 段数（0~16） */
+    rdsRtSegments: Int = 0,
     /** 最佳判决相位（-1 = 未锁定） */
     rdsBestPhase: Int = -1,
     /** 插着 USB 设备但没连上时的提示条 */
@@ -727,6 +733,11 @@ fun RxPage(
                     crcOk = rdsCrcOk,
                     segments = rdsSegments,
                     bestPhase = rdsBestPhase,
+                    piCode = rdsPi,
+                    groupTypes = rdsGroups,
+                    rtText = rdsText,
+                    rtSegments = rdsRtSegments,
+                    pty = rdsPty,
                     signalDb = signalDb,
                     onDismiss = { showRdsDiag = false }
                 )

@@ -101,6 +101,24 @@ class RdsDecoder(private val fs: Float) {
         private set
 
     /**
+     * 已锁定的 PI 码（电台识别码，0~0xFFFF）；-1 = 还没锁定。
+     *
+     * 真机调试时这是**最关键的一个数**：只要 PI 出现了，就说明
+     * Costas → 位同步 → CRC 这条链路是通的，剩下的只是等段凑齐。
+     */
+    @Volatile var piCode: Int = -1
+        private set
+
+    /**
+     * 收到的组类型分布，形如 `0A×12 2A×8`。
+     *
+     * 真机上用它判断「这个台到底发了什么」：只发 0A 说明没有 RT；
+     * 出现 4A 说明带交通信息；出现 15A 说明有 Long PS。
+     */
+    @Volatile var groupTypesSummary: String = ""
+        private set
+
+    /**
      * 一条候选位流：位累加 → 26 位块 → CRC → group → PS 字符。
      *
      * 每个候选相位一条，各自独立跑 CRC；通过校验的候选才会往上写台名。
@@ -275,6 +293,21 @@ class RdsDecoder(private val fs: Float) {
         rtSegments = bestStream?.rtSegments ?: 0
         // PTY 从最好的那条流里取（B 块 bit 9-5）
         if (bestStream != null && bestStream.lastPty >= 0) pty = bestStream.lastPty
+        if (bestStream != null) {
+            if (bestStream.piCode >= 0) piCode = bestStream.piCode
+            // 组类型分布（只列真的收到过的，按类型号排序，最多列 6 种）
+            val sb = StringBuilder()
+            var listed = 0
+            for (t in 0 until 16) {
+                val n = bestStream.groupTypes[t]
+                if (n <= 0) continue
+                if (listed >= 6) { sb.append(" …"); break }
+                if (sb.isNotEmpty()) sb.append(' ')
+                sb.append("${t}A×$n")
+                listed++
+            }
+            groupTypesSummary = sb.toString()
+        }
     }
 
     /**
