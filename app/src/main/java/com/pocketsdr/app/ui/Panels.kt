@@ -348,10 +348,11 @@ fun ScanDialog(
                     if (!allSaved) {
                         TextButton(onClick = {
                             scanFound.forEach { st ->
+                                if (favFreqs.contains(st.freq)) return@forEach
                                 store.addFavorite(com.pocketsdr.app.FreqStore.Ch(
-                                    formatFreq(st.freq), st.freq,
+                                    st.name.ifEmpty { formatFreq(st.freq) }, st.freq,
                                     FreqStore.modeIndex(band.listenMode)))
-                                if (!favFreqs.contains(st.freq)) favFreqs.add(st.freq)
+                                favFreqs.add(st.freq)
                             }
                         }) { Text("★ 全存收藏") }
                     }
