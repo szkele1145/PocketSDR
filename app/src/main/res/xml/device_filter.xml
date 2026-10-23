@@ -21,6 +21,9 @@
         vendor-id="0x1f4d"
         product-id="0xc803" />
     <usb-device
+        vendor-id="0x1f4d"
+        product-id="0xa803" />
+    <usb-device
         vendor-id="0x1b80"
         product-id="0xd398" />
     <usb-device
@@ -30,9 +33,18 @@
         vendor-id="0x1b80"
         product-id="0xd393" />
     <usb-device
+        vendor-id="0x1b80"
+        product-id="0xd3a4" />
+    <usb-device
         vendor-id="0x185b"
         product-id="0x0620" />
     <usb-device
         vendor-id="0x185b"
         product-id="0x0650" />
+    <usb-device
+        vendor-id="0x1d19"
+        product-id="0x1101" />
+    <usb-device
+        vendor-id="0x0ccd"
+        product-id="0x00a9" />
 </resources>

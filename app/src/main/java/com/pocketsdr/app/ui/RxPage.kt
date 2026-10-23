@@ -342,6 +342,7 @@ fun RxPage(
                                 (if (rdsPty in 0..31) " ·" + ptyName(rdsPty) else "") +
                                 (if (rdsTa) " ·TA" else if (rdsTp) " ·TP" else "") + " ⓘ",
                             color = when {
+                                rdsTa -> Color(0xFFFF5252)
                                 rdsName.isNotEmpty() -> Color(0xFF7DF3FF)
                                 rdsLocked || rdsCrcOk > 0 -> Color(0xFF00E5FF)
                                 else -> Color(0xFF5A6B7F)
