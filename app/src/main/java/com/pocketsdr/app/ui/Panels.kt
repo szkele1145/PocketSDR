@@ -262,7 +262,10 @@ fun ScanDialog(
                             if (audRdsTa) append(" ·TA")
                             else if (audRdsTp) append(" ·TP")
                             if (audRdsPty in 0..31) append(" ·${ptyName(audRdsPty)}")
-                            if (audRdsText.isNotEmpty()) append("  |  ${audRdsText}")
+                            if (audRdsText.isNotEmpty()) {
+                                val rt = if (audRdsText.length > 60) audRdsText.take(60) + "…" else audRdsText
+                                append("  |  $rt")
+                            }
                         }
                         Column {
                             Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
