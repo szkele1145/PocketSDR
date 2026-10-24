@@ -15,7 +15,9 @@ import kotlin.math.cos
 class RdsEncoder(
     private val stationName: String,
     /** RadioText：最长 64 字符的滚动文本（IEC 62106 group 2A），空串表示不发 */
-    private val radioText: String = ""
+    private val radioText: String = "",
+    /** 替代频率表（kHz）。非空时写进 group 0A 的 C 块（每组装 2 个 AF 码） */
+    private val alternativeFrequenciesKhz: List<Int> = emptyList()
 ) {
 
     companion object {
@@ -43,7 +45,6 @@ class RdsEncoder(
         // 块 A：PI 码（电台识别，用 0x1234 演示值）
         pushWord(0x1234, 16)
         pushWord(crc10(0x1234) xor OFFSETS[0], 10)
-
         // 块 B：group 0A (type=0000, version=0) + TP=0 + PTY=1(新闻) + 段地址
         //
         // **B 块位布局（IEC 62106 §3.1.5.3，Block 2）**：
@@ -68,8 +69,22 @@ class RdsEncoder(
         pushWord(bB, 16)
         pushWord(crc10(bB) xor OFFSETS[1], 10)
 
-        // 块 C：group 0A 时是 AF（替代频率）表，无 AF 用 0xE0 填充码
-        val bC = 0xE0E0
+        // **修复**：AF 填充用 0xE0（填充码），不是 0x00。
+        // 0x00 会被部分实现误当成「空」处理，但规范上 0x00 有特殊含义（跳过该码）；
+        // 更关键的是 0xE0（224）超出 VHF 有效码范围（1..204），我们的解码器和大多数实现都直接跳过，
+        // 不会污染 AF 列表。
+        val bC = if (alternativeFrequenciesKhz.isEmpty()) {
+            0xE0E0
+        } else {
+            // 段 segment 对应第 (segment*2) 和 (segment*2+1) 个频率；
+            // 只有 4 个 PS 段，所以最多发 8 个 AF；超出部分忽略。
+            // 不足 2 个时补 0xE0（无效码，解码器跳过）。
+            val af1 = alternativeFrequenciesKhz.getOrNull(segment * 2)
+            val af2 = alternativeFrequenciesKhz.getOrNull(segment * 2 + 1)
+            val code1 = af1?.let { ((it - 87_500) / 100).coerceIn(1, 204) } ?: 0xE0
+            val code2 = af2?.let { ((it - 87_500) / 100).coerceIn(1, 204) } ?: 0xE0
+            (code1 shl 8) or code2
+        }
         pushWord(bC, 16)
         pushWord(crc10(bC) xor OFFSETS[2], 10)
 

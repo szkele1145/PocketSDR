@@ -20,6 +20,8 @@ fun main() {
     val fs = 256_000f
     val expected = "POCKETSD"   // 8 字符，RDS PS 字段上限
     val expectedRt = "HELLO FROM POCKETSDR"
+    // AF 测试向量：98.0/99.5/101.3/104.7 MHz（4 个，占 2 个 PS 段的 C 块）
+    val expectedAf = listOf(98_000, 99_500, 101_300, 104_700)
 
     // 4 秒的 MPX
     val n = (fs * 4.0f).toInt()
@@ -29,8 +31,8 @@ fun main() {
     // 循环拼接会在接缝处让 57k 载波相位跳变、并插入多余的比特，接缝
     // 处那一组必然作废（曾经表现为台名永远缺 PS 段 0，显示 "CKETSD"）。
     // 真实电台是连续发射的，生成连续波形才和真实情况一致。
-    val one = RdsEncoder(expected, expectedRt).buildBaseband(fs)
-    val enc = RdsEncoder(expected, expectedRt)
+    val one = RdsEncoder(expected, expectedRt, expectedAf).buildBaseband(fs)
+    val enc = RdsEncoder(expected, expectedRt, expectedAf)
     val loops = (n.toDouble() / one.size).toInt() + 1
     val rds = enc.buildWave(fs, loops)
     var rdsPos = 0
@@ -61,12 +63,15 @@ fun main() {
     println("psSegments  = ${dec.psSegments}")
     println("crcBlocksOk = ${dec.crcBlocksOk}")
     println("dataLock    = ${dec.dataLock}")
+    println("af          = ${dec.afFrequenciesKhz}")
     if (System.getenv("RDS_DEBUG") != null) println(dec.debugDump())
     val okName = dec.stationName.trim() == expected && dec.dataLock
     val okRt = dec.radioText.trim() == expectedRt
     val okPty = dec.pty == 1   // 编码器发的 PTY=1（新闻）
+    val okAf = dec.afFrequenciesKhz == expectedAf
     println(if (okName) "PASS: RDS 台名解出正确" else "FAIL: 台名没解出来（期望 '$expected'）")
     println(if (okRt) "PASS: RDS RadioText 解出正确" else "FAIL: RT 没解出来（期望 '$expectedRt'，实得 '${dec.radioText.trim()}'）")
     println(if (okPty) "PASS: RDS PTY 解出正确 (${dec.pty})" else "FAIL: PTY 不对（期望 1，实得 ${dec.pty}）")
-    kotlin.system.exitProcess(if (okName && okRt && okPty) 0 else 1)
+    println(if (okAf) "PASS: RDS AF 解出正确 ${dec.afFrequenciesKhz}" else "FAIL: AF 不对（期望 $expectedAf，实得 ${dec.afFrequenciesKhz}）")
+    kotlin.system.exitProcess(if (okName && okRt && okPty && okAf) 0 else 1)
 }

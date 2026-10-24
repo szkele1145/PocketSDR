@@ -372,7 +372,9 @@ class RdsDecoder(private val fs: Float) {
             trafficProgram = bestStream.tp
             trafficAnnouncement = bestStream.ta
             if (bestStream.afList.isNotEmpty()) {
-                afFrequenciesKhz = bestStream.afList.toList()
+                afFrequenciesKhz = bestStream.afList.sorted()
+            } else {
+                afFrequenciesKhz = emptyList()
             }
             // 组类型分布（只列真的收到过的，按类型号排序，最多列 6 种）
             val sb = StringBuilder()
