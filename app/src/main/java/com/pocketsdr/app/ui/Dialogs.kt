@@ -1,5 +1,8 @@
 package com.pocketsdr.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -31,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pocketsdr.app.FreqStore
@@ -405,6 +409,20 @@ fun RdsDiagDialog(
     onTuneTo: (Long) -> Unit = {}
 ) {
     // 台名进度条：4 段，每段 2 个字符
+        val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    val afStr = afList.take(8).joinToString(" ") { "%.1fMHz".format(it / 1000f) }
+    val copyText = buildString {
+        if (name.isNotEmpty()) append("PS: $name\n")
+        if (piCode >= 0) append("PI: ${piDescribe(piCode)}\n")
+        if (groupTypes.isNotEmpty()) append("Groups: $groupTypes\n")
+        if (pty in 0..31) append("PTY: $pty ${ptyName(pty)}\n")
+        if (rdsTp) append("TP: true\n")
+        if (rdsTa) append("TA: true\n")
+        if (rtText.isNotEmpty()) append("RT: $rtText\n")
+        if (afList.isNotEmpty()) append("AF: $afStr\n")
+        append("CRC_OK: $crcOk, Segs: $segments, Phase: $bestPhase\n")
+    }
     val segText = buildString {
         for (i in 0 until 4) append(if (i < segments) "■" else "□")
     }
@@ -477,6 +495,15 @@ fun RdsDiagDialog(
                 )
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+        confirmButton = {
+            Row {
+                TextButton(onClick = {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("rds", copyText))
+                    copied = true
+                }) { Text(if (copied) "已复制" else "复制全部") }
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        }
     )
 }
