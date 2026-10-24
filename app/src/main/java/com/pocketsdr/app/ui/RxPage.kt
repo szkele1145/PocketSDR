@@ -751,6 +751,10 @@ fun RxPage(
                     rdsTp = rdsTp,
                     afList = engine.rds.afFrequenciesKhz,
                     signalDb = signalDb,
+                    onTuneTo = { f ->
+                        engine.tuneTo(f)
+                        showRdsDiag = false
+                    },
                     onDismiss = { showRdsDiag = false }
                 )
             }

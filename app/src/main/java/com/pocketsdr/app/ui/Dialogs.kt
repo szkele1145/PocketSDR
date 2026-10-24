@@ -2,6 +2,8 @@ package com.pocketsdr.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -382,6 +384,7 @@ fun FavoritesDialog(
  *  - 最佳判决相位（-1 说明还没锁定）
  *  - 信号强度与信噪比的定性判断
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RdsDiagDialog(
     name: String,
@@ -398,6 +401,8 @@ fun RdsDiagDialog(
     rdsTa: Boolean = false,
     rdsTp: Boolean = false,
     afList: List<Int> = emptyList()
+,
+    onTuneTo: (Long) -> Unit = {}
 ) {
     // 台名进度条：4 段，每段 2 个字符
     val segText = buildString {
@@ -439,10 +444,16 @@ fun RdsDiagDialog(
                 if (afList.isNotEmpty()) {
                     // AF（替代频率）：这个电台在其他频段的转发频率。
                     // 显示成 MHz 列表，最多 8 个（真实台一般 2~6 个）。
-                    val afText = afList.take(8).joinToString("  ") {
-                        "%.1f".format(it / 1000f) + "M"
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("替代频率", fontSize = 12.sp, color = Color(0xFF7DF3FF))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            afList.take(8).forEach { khz ->
+                                TextButton(onClick = { onTuneTo(khz.toLong()) }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                                    Text("%.1f MHz".format(khz / 1000f), fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
-                    Text("替代频率  $afText", fontSize = 12.sp, color = Color(0xFF7DF3FF))
                 }
                 Text("CRC 通过块数  $crcOk", fontSize = 12.sp)
                 Text(

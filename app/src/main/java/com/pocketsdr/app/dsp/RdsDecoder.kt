@@ -115,6 +115,9 @@ class RdsDecoder(private val fs: Float) {
     /** AF 表（替代频率，单位 kHz） */
     @Volatile var afFrequenciesKhz: List<Int> = emptyList()
         private set
+    /** AF 编码为 LF/MF 模式（code 250 出现） */
+    @Volatile var afLfMf: Boolean = false
+        private set
 
     /**
      * 收到的组类型分布，形如 `0A×12 2A×8`。
@@ -239,6 +242,7 @@ class RdsDecoder(private val fs: Float) {
         trafficProgram = false
         trafficAnnouncement = false
         afFrequenciesKhz = emptyList()
+        afLfMf = false
         groupTypesSummary = ""
         crcBlocksOk = 0
         bestPhaseIdx = -1
@@ -373,8 +377,10 @@ class RdsDecoder(private val fs: Float) {
             trafficAnnouncement = bestStream.ta
             if (bestStream.afList.isNotEmpty()) {
                 afFrequenciesKhz = bestStream.afList.sorted()
+                afLfMf = bestStream.afLfMf
             } else {
                 afFrequenciesKhz = emptyList()
+                afLfMf = false
             }
             // 组类型分布（只列真的收到过的，按类型号排序，最多列 6 种）
             val sb = StringBuilder()

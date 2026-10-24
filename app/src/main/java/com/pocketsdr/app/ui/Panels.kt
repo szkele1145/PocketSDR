@@ -124,11 +124,45 @@ fun ScanDialog(
     // 试听调谐失败的提示：调谐是异步的（UI 入队 → DSP 线程 → 硬件 I2C 写），
     // 点了频率后要等一下才知道硬件到底接不接受。
     var auditionFailed by remember { mutableStateOf(false) }
+    // 试听时实时显示 RDS 信息，减少真机盲目
+    var audRdsName by remember { mutableStateOf("") }
+    var audRdsText by remember { mutableStateOf("") }
+    var audRdsPty by remember { mutableStateOf(-1) }
+    var audRdsTa by remember { mutableStateOf(false) }
+    var audRdsTp by remember { mutableStateOf(false) }
+    var audRdsLock by remember { mutableStateOf(false) }
     LaunchedEffect(audition) {
         auditionFailed = false
+        audRdsName = ""
+        audRdsText = ""
+        audRdsPty = -1
+        audRdsTa = false
+        audRdsTp = false
+        audRdsLock = false
         if (audition != null) {
             kotlinx.coroutines.delay(300)
             auditionFailed = !engine.lastTuneOk
+        }
+    }
+    LaunchedEffect(audition) {
+        if (audition == null) {
+            audRdsName = ""
+            audRdsText = ""
+            audRdsPty = -1
+            audRdsTa = false
+            audRdsTp = false
+            audRdsLock = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            val r = engine.rds
+            audRdsName = r.stationName
+            audRdsText = r.radioText
+            audRdsPty = r.pty
+            audRdsTa = r.trafficAnnouncement
+            audRdsTp = r.trafficProgram
+            audRdsLock = r.dataLock
+            kotlinx.coroutines.delay(250)
         }
     }
     LaunchedEffect(scanner != null) {
@@ -223,8 +257,22 @@ fun ScanDialog(
                     // 正在试听哪个台：点频率只调谐不关窗，用户可以连续试听，
                     // 听满意了再点 ★ 收藏——原来一点就关窗口，想收藏还得重新打开对话框。
                     audition?.let { f ->
-                        Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
-                            fontSize = 12.sp, color = Color(0xFF00E5FF))
+                        val rdsLine = buildString {
+                            if (audRdsName.isNotEmpty()) append("「${audRdsName}」")
+                            if (audRdsTa) append(" ·TA")
+                            else if (audRdsTp) append(" ·TP")
+                            if (audRdsPty in 0..31) append(" ·${ptyName(audRdsPty)}")
+                            if (audRdsText.isNotEmpty()) append("  |  ${audRdsText}")
+                        }
+                        Column {
+                            Text("正在试听 ${formatFreq(f)} · 点「关闭」返回主界面",
+                                fontSize = 12.sp, color = Color(0xFF00E5FF))
+                            if (rdsLine.isNotEmpty()) {
+                                Text(rdsLine, fontSize = 11.sp, color = if (audRdsTa) Color(0xFFFF5252) else Color(0xFF8FA3B8), maxLines = 2)
+                            } else {
+                                Text(if (audRdsLock) "RDS 搜寻中…" else "无 RDS 信息", fontSize = 11.sp, color = Color(0xFF5A6B7F))
+                            }
+                        }
                     }
                     if (auditionFailed) {
                         Text("⚠ 硬件没接受这次调谐（还是原来那个台）——检查 USB 连接后重试",
