@@ -653,7 +653,12 @@ fun UsbDiagCard(engine: SdrEngine? = null, usbErrorFull: String? = null) {
             // USB 层健康：超时/复位是供电不稳与 OTG 线接触不良的硬指标
             val timeouts = engine.usbReadTimeouts
             val resets = engine.usbResets
-            if (timeouts > 0 || resets > 0) {
+            // I2C 层健康：偶发重试说明有轻微抖动；几十上百次说明链路不稳。
+            // 调谐失败>0 就是「频率数字变了、声音没变」的直接证据。
+            val i2cRetries = engine.i2cRetries
+            val tuneFailures = engine.tuneFailures
+            val hwFailures = engine.hwSettingFailures
+            if (timeouts > 0 || resets > 0 || i2cRetries > 0 || tuneFailures > 0 || hwFailures > 0) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         when {
@@ -663,6 +668,13 @@ fun UsbDiagCard(engine: SdrEngine? = null, usbErrorFull: String? = null) {
                         fontSize = 11.sp,
                         color = if (resets > 0) Color(0xFFFF6B6B) else Color(0xFFF6D55C),
                         modifier = Modifier.weight(1f)
+                    )
+                }
+                if (i2cRetries > 0 || tuneFailures > 0 || hwFailures > 0) {
+                    Text(
+                        "I2C 重试 $i2cRetries · 调谐失败 $tuneFailures · 硬件设置失败 $hwFailures",
+                        fontSize = 11.sp,
+                        color = if (tuneFailures > 0) Color(0xFFFF6B6B) else Color(0xFFF6D55C)
                     )
                 }
                 Text("供电不足或 OTG 线接触不良。换线/换口，或给手机供电后重试。",

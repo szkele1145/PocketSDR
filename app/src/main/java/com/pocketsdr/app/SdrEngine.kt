@@ -373,6 +373,15 @@ class SdrEngine private constructor(
     /** USB 累计端点复位次数（≥1 就发生过断流自救） */
     val usbResets: Int
         get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.totalResets ?: 0
+    /** I2C 累计重试次数（供电/接触不良的软指标） */
+    val i2cRetries: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.i2cRetries ?: 0
+    /** 硬件调谐累计失败次数（频率变了声音没变的硬证据） */
+    val tuneFailures: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.tuneFailures ?: 0
+    /** 硬件设置（增益/模式）累计失败次数 */
+    val hwSettingFailures: Int
+        get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.hwSettingFailures ?: 0
 
     /**
      * 生成一份纯文本自检报告。
