@@ -413,6 +413,7 @@ fun RdsDiagDialog(
     var copied by remember { mutableStateOf(false) }
     val afStr = afList.take(8).joinToString(" ") { "%.1fMHz".format(it / 1000f) }
     val copyText = buildString {
+        append("=== RDS 诊断 ===\n")
         if (name.isNotEmpty()) append("PS: $name\n")
         if (piCode >= 0) append("PI: ${piDescribe(piCode)}\n")
         if (groupTypes.isNotEmpty()) append("Groups: $groupTypes\n")
@@ -420,8 +421,12 @@ fun RdsDiagDialog(
         if (rdsTp) append("TP: true\n")
         if (rdsTa) append("TA: true\n")
         if (rtText.isNotEmpty()) append("RT: $rtText\n")
+        if (rtSegments > 0) append("RT_Segs: $rtSegments/16\n")
         if (afList.isNotEmpty()) append("AF: $afStr\n")
-        append("CRC_OK: $crcOk, Segs: $segments, Phase: $bestPhase\n")
+        append("PS_Segs: $segments/4\n")
+        append("CRC_OK: $crcOk\n")
+        append("Phase: ${if (bestPhase >= 0) bestPhase else -1}\n")
+        append("Signal: ${"%.1f".format(signalDb)} dB\n")
     }
     val segText = buildString {
         for (i in 0 until 4) append(if (i < segments) "■" else "□")
