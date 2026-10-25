@@ -420,18 +420,23 @@ class SdrEngine private constructor(
             }).append('\n')
         sb.append("  USB 读超时：").append(usbReadTimeouts).append(" 次\n")
         sb.append("  USB 端点复位：").append(usbResets).append(" 次\n")
-        // I2C 重试次数：0 = 链路很稳；偶发几次 = 有轻微抖动但被重试救回；
-        // 几十上百次 = 供电不足或 OTG 线接触不良，该换线了
         sb.append("  I2C 重试：").append(rtl?.i2cRetries ?: 0).append(" 次\n")
-        // demod 写失败：基带配置（采样率/IF/软复位）没生效，频谱频率会全错
         sb.append("  demod 写失败：").append(rtl?.demodWriteFailures ?: 0).append(" 次\n")
-        // 调谐失败：>0 说明发生过「频率数字变了、声音没变」的情况
         sb.append("  调谐失败：").append(rtl?.tuneFailures ?: 0).append(" 次\n")
         sb.append("  硬件设置失败：").append(rtl?.hwSettingFailures ?: 0).append(" 次\n")
-        // 音频写失败：AudioTrack 失效后声音会消失，但频谱照常显示
         sb.append("  音频写失败：").append(audioWriteFailures).append(" 次\n")
-        // 录音写失败：磁盘满/存储被占时录音会自动停止
         sb.append("  录音写失败：").append(recorder?.writeFailures ?: 0).append(" 次\n")
+        sb.append("RDS：\n")
+        sb.append("  锁定：").append(if (rds.dataLock) "是" else "否").append('\n')
+        sb.append("  PI：").append(if (rds.piCode >= 0) String.format("%04X", rds.piCode) else "未知").append('\n')
+        sb.append("  PS：").append(if (rds.stationName.isNotEmpty()) rds.stationName else "未知").append('\n')
+        sb.append("  PTY：").append(if (rds.pty >= 0) rds.pty.toString() else "未知").append('\n')
+        sb.append("  TP/TA：").append(if (rds.trafficProgram) "TP" else "-").append("/").append(if (rds.trafficAnnouncement) "TA" else "-").append('\n')
+        sb.append("  RT：").append(if (rds.radioText.isNotEmpty()) rds.radioText else "未知").append('\n')
+        sb.append("  RT 段：").append(rds.rtSegments).append("（PS 段：").append(rds.psSegments).append("）\n")
+        sb.append("  CRC 正确块：").append(rds.crcBlocksOk).append('\n')
+        sb.append("  群组：").append(if (rds.groupTypesSummary.isNotEmpty()) rds.groupTypesSummary else "暂无").append('\n')
+        sb.append("  AF：").append(if (rds.afFrequenciesKhz.isNotEmpty()) rds.afFrequenciesKhz.joinToString(",") { "%.1f".format(it/1000.0) } else "暂无").append(if (rds.afLfMf) "（LF/MF）" else "").append('\n')
         sb.append("  仿真源：").append(if (!isRealSource) "正常" else "不适用").append('\n')
         return sb.toString()
     }
