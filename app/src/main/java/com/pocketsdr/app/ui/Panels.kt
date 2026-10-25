@@ -453,14 +453,18 @@ fun LogDialog(onDismiss: () -> Unit) {
             val context = LocalContext.current
             Row {
                 TextButton(onClick = {
+                    val txt = com.pocketsdr.app.SdrLog.dump().take(400).joinToString("\n")
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("PocketSDR 日志", txt))
+                    android.widget.Toast.makeText(context, "已复制日志（最近400行）", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("复制") }
+                TextButton(onClick = {
                     com.pocketsdr.app.SdrLog.save(context)?.let {
                         android.widget.Toast.makeText(context, "已保存: $it", android.widget.Toast.LENGTH_SHORT).show()
                     } ?: android.widget.Toast.makeText(
                         context, "日志落盘失败（存储不可用）", android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }) { Text("落盘") }
-                // 分享：落盘只给出一个文件路径，用户还得自己去文件管理器翻。
-                // 崩溃排查的实际动作是「把日志发给开发者」，所以直接给分享入口。
                 TextButton(onClick = {
                     val path = com.pocketsdr.app.SdrLog.save(context)
                     if (path == null) {
