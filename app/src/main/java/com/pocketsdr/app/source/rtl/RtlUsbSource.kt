@@ -42,6 +42,12 @@ class RtlUsbSource(
      * 几十上百次 = 供电不足或 OTG 线接触不良，该换线了。
      */
     val i2cRetries: Int get() = rtl?.i2cRetryCount ?: 0
+    /** 上次 I2C 重试发生时间（SystemClock.elapsedRealtime()） */
+    @Volatile var lastI2cRetryAtMs = 0L
+    /** 上次调谐失败时间（SystemClock.elapsedRealtime()） */
+    @Volatile var lastTuneFailureAtMs = 0L
+    /** 上次硬件设置失败时间（SystemClock.elapsedRealtime()） */
+    @Volatile var lastHwSettingFailureAtMs = 0L
 
     /** USB 设备标识：VID:PID + 产品名，自检报告用 */
     val usbDeviceInfo: String
@@ -246,10 +252,14 @@ class RtlUsbSource(
 
     private fun retune() {
         if (closed) return
+        val retriesBefore = rtl?.i2cRetryCount ?: 0
         try {
             if (directSampling != 0) {
                 // 直接采样模式：调谐 = IF 频率
                 rtl.setIfFreq(centerFreq)
+                val now = android.os.SystemClock.elapsedRealtime()
+                val r = rtl?.i2cRetryCount ?: retriesBefore
+                if (r > retriesBefore) lastI2cRetryAtMs = now
                 return
             }
             val t = tuner ?: return
@@ -264,6 +274,7 @@ class RtlUsbSource(
                     ok = t.setParams(tuneTo)
                     if (ok) break
                     tuneFailures++
+                    lastTuneFailureAtMs = android.os.SystemClock.elapsedRealtime()
                     SdrLog.w("RTL", "调谐 ${tuneTo / 1000} kHz 失败，重试 ${attempt + 1}/2")
                     try { Thread.sleep(20) } catch (_: InterruptedException) {}
                 }
@@ -271,9 +282,16 @@ class RtlUsbSource(
                 // repeater 必须复位：留在 on 状态会让后续块寄存器读写全部错乱
                 rtl.setI2cRepeater(false)
             }
-            if (!ok) SdrLog.e("RTL", "调谐 ${tuneTo / 1000} kHz 最终失败")
+            val now2 = android.os.SystemClock.elapsedRealtime()
+            val r2 = rtl?.i2cRetryCount ?: retriesBefore
+            if (r2 > retriesBefore) lastI2cRetryAtMs = now2
+            if (!ok) {
+                lastTuneFailureAtMs = now2
+                SdrLog.e("RTL", "调谐 ${tuneTo / 1000} kHz 最终失败")
+            }
         } catch (e: Exception) {
             tuneFailures++
+            lastTuneFailureAtMs = android.os.SystemClock.elapsedRealtime()
             SdrLog.e("RTL", "调谐异常: ${e.message?.take(40)}")
         }
     }
@@ -281,6 +299,7 @@ class RtlUsbSource(
     /** 设 LNA 增益（tenths dB，FC0013 内部取最近档）；返回是否被硬件接受 */
     fun setLnaGain(tenthsDb: Int): Boolean {
         if (closed) return false
+        val retriesBefore = rtl?.i2cRetryCount ?: 0
         return try {
             rtl.setI2cRepeater(true)
             val ok = try {
@@ -288,9 +307,13 @@ class RtlUsbSource(
             } finally {
                 rtl.setI2cRepeater(false)
             }
+            val now = android.os.SystemClock.elapsedRealtime()
+            val r = rtl?.i2cRetryCount ?: retriesBefore
+            if (r > retriesBefore) lastI2cRetryAtMs = now
             if (!ok) {
                 // 以前失败是完全静默的：用户调了增益却不知道有没有生效
                 hwSettingFailures++
+                lastHwSettingFailureAtMs = now
                 SdrLog.w("RTL", "LNA 增益设置失败 ($tenthsDb)")
             } else {
                 // 硬件接受了才记录：增益扫描要靠它恢复用户原来那一档
@@ -299,6 +322,7 @@ class RtlUsbSource(
             ok
         } catch (e: Exception) {
             hwSettingFailures++
+            lastHwSettingFailureAtMs = android.os.SystemClock.elapsedRealtime()
             SdrLog.e("RTL", "LNA 增益异常: ${e.message?.take(40)}")
             false
         }
@@ -307,6 +331,7 @@ class RtlUsbSource(
     /** 手动增益模式开关（true=手动按 setLnaGain 的值）；返回是否被硬件接受 */
     fun setGainMode(manual: Boolean): Boolean {
         if (closed) return false
+        val retriesBefore = rtl?.i2cRetryCount ?: 0
         return try {
             rtl.setI2cRepeater(true)
             val ok = try {
@@ -317,13 +342,18 @@ class RtlUsbSource(
             // 只在硬件真的接受了才更新记录：否则界面显示「手动」而硬件还在自动，
             // 用户会以为增益控制坏了
             if (ok) manualGainMode = manual
+            val now = android.os.SystemClock.elapsedRealtime()
+            val r = rtl?.i2cRetryCount ?: retriesBefore
+            if (r > retriesBefore) lastI2cRetryAtMs = now
             if (!ok) {
                 hwSettingFailures++
+                lastHwSettingFailureAtMs = now
                 SdrLog.w("RTL", "增益模式设置失败 ($manual)")
             }
             ok
         } catch (e: Exception) {
             hwSettingFailures++
+            lastHwSettingFailureAtMs = android.os.SystemClock.elapsedRealtime()
             SdrLog.e("RTL", "增益模式异常: ${e.message?.take(40)}")
             false
         }

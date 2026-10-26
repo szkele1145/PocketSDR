@@ -382,6 +382,9 @@ class SdrEngine private constructor(
     /** 硬件设置（增益/模式）累计失败次数 */
     val hwSettingFailures: Int
         get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.hwSettingFailures ?: 0
+    val lastI2cRetryAtMs: Long get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.lastI2cRetryAtMs ?: 0L
+    val lastTuneFailureAtMs: Long get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.lastTuneFailureAtMs ?: 0L
+    val lastHwSettingFailureAtMs: Long get() = (source as? com.pocketsdr.app.source.rtl.RtlUsbSource)?.lastHwSettingFailureAtMs ?: 0L
 
     /**
      * 生成一份纯文本自检报告。

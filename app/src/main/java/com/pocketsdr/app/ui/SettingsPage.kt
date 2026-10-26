@@ -671,8 +671,27 @@ fun UsbDiagCard(engine: SdrEngine? = null, usbErrorFull: String? = null) {
                     )
                 }
                 if (i2cRetries > 0 || tuneFailures > 0 || hwFailures > 0) {
+                    // 相对时间戳：失败是"历史累积"还是"刚才发生的"，对判断故障是否已消失至关重要。
+                    // 真机联调时，用户最关心的不是总次数，而是"现在还在失败吗"。
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    fun ago(ms: Long): String = when {
+                        ms <= 0L -> ""
+                        now - ms < 60_000L -> "（${(now - ms) / 1000} 秒前）"
+                        now - ms < 3_600_000L -> "（${(now - ms) / 60_000} 分钟前）"
+                        else -> "（${(now - ms) / 3_600_000} 小时前）"
+                    }
+                    val tAgo = ago(engine.lastTuneFailureAtMs)
+                    val hAgo = ago(engine.lastHwSettingFailureAtMs)
+                    val iAgo = ago(engine.lastI2cRetryAtMs)
                     Text(
-                        "I2C 重试 $i2cRetries · 调谐失败 $tuneFailures · 硬件设置失败 $hwFailures",
+                        buildString {
+                            append("I2C 重试 $i2cRetries")
+                            if (iAgo.isNotEmpty()) append(iAgo)
+                            append(" · 调谐失败 $tuneFailures")
+                            if (tAgo.isNotEmpty()) append(tAgo)
+                            append(" · 硬件设置失败 $hwFailures")
+                            if (hAgo.isNotEmpty()) append(hAgo)
+                        },
                         fontSize = 11.sp,
                         color = if (tuneFailures > 0) Color(0xFFFF6B6B) else Color(0xFFF6D55C)
                     )
