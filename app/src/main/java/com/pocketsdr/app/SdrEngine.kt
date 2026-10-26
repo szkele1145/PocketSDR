@@ -436,6 +436,21 @@ class SdrEngine private constructor(
         sb.append("  demod 写失败：").append(rtl?.demodWriteFailures ?: 0).append(" 次\n")
         sb.append("  调谐失败：").append(rtl?.tuneFailures ?: 0).append(" 次\n")
         sb.append("  硬件设置失败：").append(rtl?.hwSettingFailures ?: 0).append(" 次\n")
+        run {
+            val now = android.os.SystemClock.elapsedRealtime()
+            fun ago(ms: Long): String = if (ms <= 0L) "从未" else {
+                val d = now - ms
+                when {
+                    d < 60_000L -> "${d / 1000}秒前"
+                    d < 3_600_000L -> "${d / 60_000}分钟前"
+                    d < 86_400_000L -> "${d / 3_600_000}小时前"
+                    else -> "${d / 86_400_000}天前"
+                }
+            }
+            sb.append("  上次 I2C 重试：").append(ago(rtl?.lastI2cRetryAtMs ?: 0L)).append('\n')
+            sb.append("  上次调谐失败：").append(ago(rtl?.lastTuneFailureAtMs ?: 0L)).append('\n')
+            sb.append("  上次硬件设置失败：").append(ago(rtl?.lastHwSettingFailureAtMs ?: 0L)).append('\n')
+        }
         sb.append("  音频写失败：").append(audioWriteFailures).append(" 次\n")
         sb.append("  录音写失败：").append(recorder?.writeFailures ?: 0).append(" 次\n")
         sb.append("RDS：\n")
