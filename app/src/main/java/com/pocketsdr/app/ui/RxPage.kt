@@ -927,41 +927,76 @@ private fun StepArrow(
  *
  * 每个点连同当时的调谐频率一起记录：换了台之后，旧台的强度和新台画在同一条线上
  * 会误导用户（看着像信号突然掉了，其实只是换了个频点）。所以频率一变，曲线就断开。
+ *
+ * 峰值保持：曲线只回答「现在多强」，调天线时更想知道「刚才最好到过多少」。
+ * 瞬时值一直在跳，峰值线才是判断「这个位置值不值得固定下来」的依据。
+ * 峰值只统计当前频点段——换台后旧台的峰值留着会让人以为新台也能到这个强度。
  */
 @Composable
 private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modifier = Modifier) {
-    androidx.compose.foundation.Canvas(modifier = modifier.fillMaxWidth().height(36.dp)) {
-        if (history.size < 2) return@Canvas
-        val w = size.width
-        val h = size.height
-        // dB 范围：固定 -110..-20，跨台可比；不随当前值缩放（否则弱信号时整条线乱跳）
-        val dbMin = -110f
-        val dbMax = -20f
-        fun y(db: Float): Float =
-            h - ((db - dbMin) / (dbMax - dbMin)).coerceIn(0f, 1f) * h
-        // 底噪参考线（-80dB）
-        drawLine(
-            color = Color(0x335A6B7F),
-            start = Offset(0f, y(-80f)),
-            end = Offset(w, y(-80f)),
-            strokeWidth = 1f
-        )
-        val stepX = w / (history.size - 1)
-        var last: Offset? = null
-        var lastFreq: Long? = null
-        for (i in history.indices) {
-            val (freq, db) = history[i]
-            val p = Offset(i * stepX, y(db))
-            // 只有同一频率的点才连线；换台处断开
-            if (last != null && lastFreq == freq) {
-                drawLine(Color(0xFF00E5FF), last!!, p, strokeWidth = 1.6f)
+    // 当前频点段（从尾往前，直到频率变化为止）的峰值
+    val curFreq = history.lastOrNull()?.first
+    val peakDb = history.asReversed()
+        .takeWhile { it.first == curFreq }
+        .maxOfOrNull { it.second }
+    Box(modifier = modifier.fillMaxWidth().height(36.dp)) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            if (history.size < 2) return@Canvas
+            val w = size.width
+            val h = size.height
+            // dB 范围：固定 -110..-20，跨台可比；不随当前值缩放（否则弱信号时整条线乱跳）
+            val dbMin = -110f
+            val dbMax = -20f
+            fun y(db: Float): Float =
+                h - ((db - dbMin) / (dbMax - dbMin)).coerceIn(0f, 1f) * h
+            // 底噪参考线（-80dB）
+            drawLine(
+                color = Color(0x335A6B7F),
+                start = Offset(0f, y(-80f)),
+                end = Offset(w, y(-80f)),
+                strokeWidth = 1f
+            )
+            // 峰值保持线：虚线画在该 dB 高度上
+            if (peakDb != null) {
+                val py = y(peakDb)
+                var x = 0f
+                while (x < w) {
+                    drawLine(
+                        color = Color(0x99F6D55C),
+                        start = Offset(x, py),
+                        end = Offset((x + 6f).coerceAtMost(w), py),
+                        strokeWidth = 1.4f
+                    )
+                    x += 11f
+                }
             }
-            last = p
-            lastFreq = freq
+            val stepX = w / (history.size - 1)
+            var last: Offset? = null
+            var lastFreq: Long? = null
+            for (i in history.indices) {
+                val (freq, db) = history[i]
+                val p = Offset(i * stepX, y(db))
+                // 只有同一频率的点才连线；换台处断开
+                if (last != null && lastFreq == freq) {
+                    drawLine(Color(0xFF00E5FF), last!!, p, strokeWidth = 1.6f)
+                }
+                last = p
+                lastFreq = freq
+            }
+            // 当前值端点
+            last?.let {
+                drawCircle(Color(0xFFF6D55C), radius = 2.5f, center = it)
+            }
         }
-        // 当前值端点
-        last?.let {
-            drawCircle(Color(0xFFF6D55C), radius = 2.5f, center = it)
+        // 峰值数值：只说「强/弱」不够，调天线要知道能到多少 dB
+        if (peakDb != null) {
+            Text(
+                "峰值 ${peakDb.toInt()}dB",
+                fontSize = 9.sp,
+                color = Color(0xCCF6D55C),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp)
+            )
         }
     }
 }
