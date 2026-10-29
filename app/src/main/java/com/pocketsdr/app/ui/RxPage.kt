@@ -196,6 +196,8 @@ fun RxPage(
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.tunedFreq to engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
+            // 静噪没开时信号质量结论是「静噪关着」，此时历史曲线收的全是底噪，
+            // 峰值线也一样——没有额外信息量，不加。
             // 自动 dB 范围：底噪下留 15dB，峰值上留 8dB；总高度至少 40dB，最多到 0dB
             if (engine.autoDbRange) {
                 val floor = engine.noiseFloorDb
@@ -393,6 +395,7 @@ fun RxPage(
         // ===== 信号历史条（最近 30 秒）=====
         SignalHistoryStrip(
             history = signalHistory,
+            squelchOpen = squelchOpen,
             modifier = Modifier.background(Color(0xFF0D1219))
         )
 
@@ -933,12 +936,19 @@ private fun StepArrow(
  * 峰值只统计当前频点段——换台后旧台的峰值留着会让人以为新台也能到这个强度。
  */
 @Composable
-private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modifier = Modifier) {
+private fun SignalHistoryStrip(
+    history: List<Pair<Long, Float>>,
+    squelchOpen: Boolean = true,
+    modifier: Modifier = Modifier
+) {
     // 当前频点段（从尾往前，直到频率变化为止）的峰值
     val curFreq = history.lastOrNull()?.first
     val peakDb = history.asReversed()
         .takeWhile { it.first == curFreq }
         .maxOfOrNull { it.second }
+    // 静噪关着时：历史曲线收的全是底噪，峰值线也没有额外信息量，
+    // 不画——否则用户会盯着一条「峰值 -100dB」的虚线以为坏了。
+    val showPeak = squelchOpen && peakDb != null
     Box(modifier = modifier.fillMaxWidth().height(36.dp)) {
         androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
             if (history.size < 2) return@Canvas
@@ -957,7 +967,7 @@ private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modif
                 strokeWidth = 1f
             )
             // 峰值保持线：虚线画在该 dB 高度上
-            if (peakDb != null) {
+            if (showPeak) {
                 val py = y(peakDb)
                 var x = 0f
                 while (x < w) {
@@ -989,7 +999,7 @@ private fun SignalHistoryStrip(history: List<Pair<Long, Float>>, modifier: Modif
             }
         }
         // 峰值数值：只说「强/弱」不够，调天线要知道能到多少 dB
-        if (peakDb != null) {
+        if (showPeak) {
             Text(
                 "峰值 ${peakDb.toInt()}dB",
                 fontSize = 9.sp,
