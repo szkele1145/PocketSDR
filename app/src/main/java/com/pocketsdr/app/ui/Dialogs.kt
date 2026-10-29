@@ -336,7 +336,20 @@ fun FavoritesDialog(
                 onChange()
             }) { Text("★ 收藏当前") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+        dismissButton = {
+            Row {
+                // 正在试听的台：满意了直接存，不用关窗再翻收藏列表
+                val curAudition = audition
+                if (curAudition != null && !favorites.any { it.freq == curAudition }) {
+                    TextButton(onClick = {
+                        val label = engine.rds.stationName.trim().ifEmpty { formatFreq(curAudition) }
+                        store.addFavorite(FreqStore.Ch(label, curAudition, FreqStore.modeIndex(engine.mode)))
+                        onChange()
+                    }) { Text("★ 收藏当前", color = Color(0xFFF6D55C)) }
+                }
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        }
     )
 
     // 改名子弹窗

@@ -408,6 +408,18 @@ fun ScanDialog(
                         }) { Text("★ 全存收藏") }
                     }
                 }
+                // ★ 收藏当前试听台：试听满意了，点一下就存，
+                // 不用关窗再翻收藏列表。收藏名优先用 RDS 台名。
+                val curAudition = audition
+                if (curAudition != null && !favFreqs.contains(curAudition)) {
+                    TextButton(onClick = {
+                        val name = audRdsName.trim().ifEmpty {
+                            scanFound.firstOrNull { it.freq == curAudition }?.name?.ifEmpty { formatFreq(curAudition) } ?: formatFreq(curAudition)
+                        }
+                        store.addFavorite(com.pocketsdr.app.FreqStore.Ch(name, curAudition, FreqStore.modeIndex(band.listenMode)))
+                        favFreqs.add(curAudition)
+                    }) { Text("★ 收藏当前", color = Color(0xFFF6D55C)) }
+                }
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
         }
