@@ -196,8 +196,6 @@ fun RxPage(
             // 采集信号历史：满了丢最旧的，容量固定不增长
             signalHistory.add(engine.tunedFreq to engine.signalDb)
             if (signalHistory.size > 120) signalHistory.removeAt(0)
-            // 静噪没开时信号质量结论是「静噪关着」，此时历史曲线收的全是底噪，
-            // 峰值线也一样——没有额外信息量，不加。
             // 自动 dB 范围：底噪下留 15dB，峰值上留 8dB；总高度至少 40dB，最多到 0dB
             if (engine.autoDbRange) {
                 val floor = engine.noiseFloorDb
@@ -232,7 +230,6 @@ fun RxPage(
             kotlinx.coroutines.delay(250)
         }
     }
-
     Column(Modifier.fillMaxSize().background(Color(0xFF0B0E14))) {
         // ===== 硬件提示横幅（顶部通栏）=====
         // 为什么放横幅而不是挤在底部状态行：底部那行 10sp 小字只放得下三四十个字，
