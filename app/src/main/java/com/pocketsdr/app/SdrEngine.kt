@@ -722,8 +722,8 @@ class SdrEngine private constructor(
             out[k] = db           // 瀑布/原始谱：瞬时值
             // 谱线 EMA：上升快跟、下降慢衰减（SDR# 风格余晖）
             val prev = smooth[k]
-            smooth[k] = if (db > prev) db * 0.55f + prev * 0.45f
-                        else db * 0.12f + prev * 0.88f
+            smooth[k] = if (db > prev) db * 0.6f + prev * 0.4f
+                        else db * 0.1f + prev * 0.9f
             // 峰值保持：立即跟上新高，否则按固定速率衰减
             peak[k] = if (holdOn) {
                 val decayed = peak[k] - peakDecay
