@@ -714,8 +714,8 @@ class SdrEngine private constructor(
         val smooth = specSmooth   // 谱线专用平滑缓冲
         val peak = specPeak
         val holdOn = peakHoldEnabled
-        // 峰值衰减系数：每帧掉约 0.06 dB，滑落更顺滑、不显突兀
-        val peakDecay = 0.06f
+        // 峰值衰减系数：每帧掉约 0.05 dB，滑落更顺滑、不显突兀
+        val peakDecay = 0.05f
         for (k in 0 until fftSize) {
             val src = (k + half) and (fftSize - 1)
             val db = 10f * (Math.log10((fftPower[src] * scaleInv).toDouble() + 1e-12)).toFloat()
