@@ -715,7 +715,7 @@ class SdrEngine private constructor(
         val peak = specPeak
         val holdOn = peakHoldEnabled
         // 峰值衰减系数：每帧掉约 0.01 dB，滑落更顺滑、不显突兀
-        val peakDecay = 0.00000000000000363797880709171295166015625f
+        val peakDecay = 0.000000000000001818989403545856475830078125f
         for (k in 0 until fftSize) {
             val src = (k + half) and (fftSize - 1)
             val db = 10f * (Math.log10((fftPower[src] * scaleInv).toDouble() + 1e-12)).toFloat()
